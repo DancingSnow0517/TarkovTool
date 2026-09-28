@@ -1,7 +1,7 @@
 "use strict";
 
 /* 纯静态塔科夫任务地图：?map=<地图key>&q=<区域/任务物品id,逗号分隔>&mode=regular&lang=zh
- * 坐标系/投影逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)。 */
+ * 坐标系/投影与楼层分层逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)。 */
 
 const MAP_ALIASES = {
   "ground-zero-21": "ground-zero",
@@ -89,16 +89,100 @@ async function fetchCached(url) {
   return data;
 }
 
+/* ---- 楼层状态 ---- */
+
+let map = null;
+let mapData = null;
+let mapBounds = null;
+let svgRoot = null;        // 内联 SVG 的根节点（仅 SVG 底图）
+let floorOverlay = null;   // 当前楼层的瓦片叠加层
+let activeFloor = null;    // 当前楼层（null = 主层）
+const focusLayers = [];    // 聚焦绘制物，_floor 记录所属楼层
+
+function inExtentBounds(boundsEntry, position) {
+  // bounds 条目是游戏坐标的对角点 [[x, z], [x, z], 名称?]
+  const [c1, c2] = boundsEntry;
+  return position.x >= Math.min(c1[0], c2[0]) && position.x <= Math.max(c1[0], c2[0])
+      && position.z >= Math.min(c1[1], c2[1]) && position.z <= Math.max(c1[1], c2[1]);
+}
+
+function floorMatch(top, bottom, position, extents) {
+  // 移植自 tarkov-dev markerIsOnLayer：高度重叠 + 水平 bounds 包含
+  for (const ext of extents || []) {
+    const [lo, hi] = ext.height || [-Infinity, Infinity];
+    if (top >= lo && bottom < hi) {
+      const full = bottom >= lo && top <= hi;
+      if (ext.bounds) {
+        for (const b of ext.bounds) {
+          if (inExtentBounds(b, position)) return full ? "full" : "partial";
+        }
+      } else {
+        return full ? "full" : "partial";
+      }
+    }
+  }
+  return false;
+}
+
+function layerForZone(top, bottom, position) {
+  // 完全包含优先（官方会把完全落在某层的标记从主层隐藏）；否则归到首个部分重叠的楼层
+  let partial = null;
+  for (const layer of mapData.layers || []) {
+    const m = floorMatch(top, bottom, position, layer.extents);
+    if (m === "full") return layer;
+    if (m === "partial" && !partial) partial = layer;
+  }
+  return partial;
+}
+
+function setFloor(layer) {
+  activeFloor = layer;
+  // SVG 底图：切换楼层分组显隐，非主层时基底分组调暗（样式移植自 tarkov-dev）
+  if (svgRoot) {
+    const svgEl = svgRoot.parentElement;
+    svgEl.classList.toggle("off-level", !!layer);
+    const activeId = layer ? layer.svgLayer : mapData.svgLayer;
+    for (const g of svgRoot.children) {
+      if (g.nodeName !== "g" || !g.id || g.classList.contains("base-layer")) continue;
+      const show = g.id === activeId || (!!activeId && g.dataset.keepWithGroup === activeId);
+      g.classList.toggle("hidden-layer", !show);
+    }
+  }
+  // 楼层瓦片叠加：SVG 分组覆盖不到的楼层（无 svgLayer）或瓦片底图
+  if (floorOverlay) {
+    floorOverlay.remove();
+    floorOverlay = null;
+  }
+  if (layer && layer.tilePath && !(svgRoot && layer.svgLayer)) {
+    floorOverlay = L.tileLayer(layer.tilePath, {
+      tileSize: mapData.tileSize || 256,
+      bounds: mapBounds,
+      maxZoom: Math.max(7, mapData.maxZoom),
+      maxNativeZoom: mapData.maxZoom,
+    }).addTo(map);
+  }
+  // 非当前楼层的聚焦绘制物调暗
+  for (const l of focusLayers) {
+    const onFloor = (l._floor || null) === layer;
+    l.setStyle(onFloor ? l._normal : l._dim);
+  }
+  const select = document.getElementById("floor-select");
+  if (select.options.length) {
+    select.value = layer ? String(mapData.layers.indexOf(layer)) : "";
+  }
+}
+
 /* ---- 地图底层 ---- */
 
-async function addSvgLayer(map, mapData, bounds) {
+async function addSvgLayer(mapData, bounds) {
   const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   const text = await (await fetch(mapData.svgPath)).text();
   svgElement.innerHTML = text;
-  svgElement.setAttribute("viewBox", svgElement.children[0].getAttribute("viewBox"));
+  svgRoot = svgElement.children[0];
+  svgElement.setAttribute("viewBox", svgRoot.getAttribute("viewBox"));
   // 顶层 g 节点里只保留本图基准楼层，其余隐藏
-  for (const g of [...svgElement.children[0].children].filter((c) => c.nodeName === "g" && c.id)) {
+  for (const g of [...svgRoot.children].filter((c) => c.nodeName === "g" && c.id)) {
     if (g.id === mapData.svgLayer || g.dataset["keepWithGroup"] === mapData.svgLayer) {
       g.classList.add("base-layer");
     } else {
@@ -109,7 +193,7 @@ async function addSvgLayer(map, mapData, bounds) {
   L.svgOverlay(svgElement, svgBounds, { className: "base-layer" }).addTo(map);
 }
 
-function addTileLayer(map, mapData, bounds) {
+function addTileLayer(mapData, bounds) {
   L.tileLayer(mapData.tilePath, {
     tileSize: mapData.tileSize || 256,
     bounds,
@@ -118,10 +202,8 @@ function addTileLayer(map, mapData, bounds) {
   }).addTo(map);
 }
 
-function addLabels(map, mapData) {
+function addLabels(mapData) {
   if (!mapData.labels || !mapData.labels.length) return;
-  const range = mapData.heightRange || [-1000, 1000];
-  const midY = (range[1] - range[0]) / 2 + range[0];
   for (const label of mapData.labels) {
     L.marker(pos({ x: label.position[0], z: label.position[1] }), {
       icon: L.divIcon({
@@ -150,14 +232,22 @@ function zoneLatLngs(zone) {
   ];
 }
 
-function popupHtml(task, ob, tr) {
+function popupHtml(task, ob, tr, floor) {
   const name = tr[task.name] || task.normalizedName || task.name;
   const desc = tr[ob.description] || ob.description;
-  return `<b>${name}</b><br>${desc}`;
+  const floorLine = floor ? `<br><i>楼层: ${floor.name}</i>` : "";
+  return `<b>${name}</b><br>${desc}${floorLine}`;
 }
 
-function findAndDraw(map, mapData, tasksData, tr) {
-  const drawn = [];
+function trackFocus(layer, floor, normal, dim) {
+  layer._floor = floor;
+  layer._normal = normal;
+  layer._dim = dim;
+  focusLayers.push(layer);
+  return layer;
+}
+
+function findAndDraw(tasksData, tr) {
   const missing = [];
   for (const qid of qIds) {
     let found = false;
@@ -166,29 +256,36 @@ function findAndDraw(map, mapData, tasksData, tr) {
         for (const zone of ob.zones || []) {
           if (zone.id !== qid || !mapData.apiIds.includes(zone.map)) continue;
           found = true;
+          const top = zone.top ?? zone.position.y;
+          const bottom = zone.bottom ?? zone.position.y;
+          const floor = layerForZone(top, bottom, zone.position);
           const poly = L.polygon(zoneLatLngs(zone), {
             color: "#ffd54a",
             weight: 3,
             fillColor: "#ffd54a",
             fillOpacity: 0.15,
             className: "zone-focus",
-          }).addTo(map).bindPopup(popupHtml(task, ob, tr));
-          drawn.push(poly);
+          }).addTo(map).bindPopup(popupHtml(task, ob, tr, floor));
+          trackFocus(poly, floor,
+            { opacity: 1, fillOpacity: 0.15 },
+            { opacity: 0.15, fillOpacity: 0.03 });
         }
         if (ob.questItem === qid) {
           for (const loc of ob.possibleLocations || []) {
             if (!mapData.apiIds.includes(loc.map)) continue;
             for (const p of loc.positions || []) {
               found = true;
-              drawn.push(
-                L.circleMarker(pos(p), {
-                  radius: 6,
-                  color: "#ff5252",
-                  weight: 2,
-                  fillColor: "#ff5252",
-                  fillOpacity: 0.8,
-                }).addTo(map).bindPopup(popupHtml(task, ob, tr))
-              );
+              const floor = layerForZone(p.y, p.y, p);
+              const marker = L.circleMarker(pos(p), {
+                radius: 6,
+                color: "#ff5252",
+                weight: 2,
+                fillColor: "#ff5252",
+                fillOpacity: 0.8,
+              }).addTo(map).bindPopup(popupHtml(task, ob, tr, floor));
+              trackFocus(marker, floor,
+                { opacity: 1, fillOpacity: 0.8 },
+                { opacity: 0.15, fillOpacity: 0.1 });
             }
           }
         }
@@ -196,14 +293,14 @@ function findAndDraw(map, mapData, tasksData, tr) {
     }
     if (!found) missing.push(qid);
   }
-  return { drawn, missing };
+  return missing;
 }
 
 /* ---- 主流程 ---- */
 
 async function main() {
   const maps = await (await fetch("maps.json")).json();
-  const mapData = maps.find((m) => m.key === mapParam) || maps.find((m) => m.key === "customs");
+  mapData = maps.find((m) => m.key === mapParam) || maps.find((m) => m.key === "customs");
 
   const select = document.getElementById("map-select");
   for (const m of maps) {
@@ -225,9 +322,19 @@ async function main() {
     else params.delete("style");
     location.search = params.toString();
   };
+  const floorSelect = document.getElementById("floor-select");
+  if (mapData.layers && mapData.layers.length) {
+    const baseName = (mapData.svgLayer || "Main").replace(/_/g, " ");
+    floorSelect.appendChild(new Option(baseName, ""));
+    mapData.layers.forEach((l, i) => floorSelect.appendChild(new Option(l.name, String(i))));
+    floorSelect.hidden = false;
+    floorSelect.onchange = () => {
+      setFloor(floorSelect.value === "" ? null : mapData.layers[Number(floorSelect.value)]);
+    };
+  }
 
-  const bounds = getBounds(mapData.bounds);
-  const map = L.map("map", {
+  mapBounds = getBounds(mapData.bounds);
+  map = L.map("map", {
     crs: getCRS(mapData),
     minZoom: mapData.minZoom,
     maxZoom: Math.max(7, mapData.maxZoom),
@@ -235,18 +342,18 @@ async function main() {
     attributionControl: false,
     zoomControl: true,
   });
-  map.fitBounds(bounds);
+  map.fitBounds(mapBounds);
 
   const useSvg = mapData.svgPath && styleParam !== "tile";
   const useTile = mapData.tilePath && (styleParam === "tile" || !mapData.svgPath);
   try {
-    if (useSvg) await addSvgLayer(map, mapData, bounds);
-    else if (useTile) addTileLayer(map, mapData, bounds);
+    if (useSvg) await addSvgLayer(mapData, mapBounds);
+    else if (useTile) addTileLayer(mapData, mapBounds);
   } catch (e) {
     // SVG 加载失败时回退瓦片
-    if (mapData.tilePath) addTileLayer(map, mapData, bounds);
+    if (mapData.tilePath) addTileLayer(mapData, mapBounds);
   }
-  addLabels(map, mapData);
+  addLabels(mapData);
 
   if (!qIds.length) {
     setStatus("");
@@ -256,12 +363,14 @@ async function main() {
   setStatus("加载任务数据 ...");
   const tasksData = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks`)).data;
   const tr = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks_${lang}`)).data;
-  const { drawn, missing } = findAndDraw(map, mapData, tasksData, tr);
+  const missing = findAndDraw(tasksData, tr);
 
-  if (drawn.length) {
-    const group = L.featureGroup(drawn);
+  if (focusLayers.length) {
+    // 自动切到第一个目标所在楼层
+    setFloor(focusLayers[0]._floor || null);
+    const group = L.featureGroup(focusLayers);
     map.fitBounds(group.getBounds().pad(2), { maxZoom: mapData.maxZoom });
-    const first = drawn.find((l) => l.getPopup());
+    const first = focusLayers.find((l) => l.getPopup());
     if (first) first.openPopup();
     setStatus(missing.length ? `未找到: ${missing.join(", ")}` : "");
   } else {

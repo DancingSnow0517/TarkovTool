@@ -43,6 +43,11 @@ html, body {
   display: none;
 }
 
+/* 切到非主层时，基底分组调暗（移植自 tarkov-dev 的 off-level 样式） */
+#map svg.off-level g.base-layer {
+  opacity: 0.2;
+}
+
 /* 地图区域文字标签（基准 20px，标签 size 字段为百分比） */
 .map-area-label {
   font-size: 20px;
