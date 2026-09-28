@@ -295,6 +295,22 @@ function trackFocus(layer, floor, normal, dim) {
   return layer;
 }
 
+function bindFocusPopup(layer, entries, tr, floor) {
+  // autoClose/closeOnClick 关闭，保证多点气泡同时可见；
+  // 点击气泡内容 = 关闭该气泡并切换到点位所在楼层（点 × 按钮不切层）
+  layer.bindPopup(popupHtml(entries, tr, floor),
+    { autoClose: false, closeOnClick: false, className: "focus-popup" });
+  layer.on("popupopen", (e) => {
+    const el = e.popup.getElement();
+    if (!el) return;
+    el.addEventListener("click", (ev) => {
+      if (ev.target.closest(".leaflet-popup-close-button")) return;
+      layer.closePopup();
+      setFloor(layer._floor || null);
+    }, { once: true });
+  });
+}
+
 function findAndDraw(tasksData, tr) {
   const missing = [];
   const zoneHits = new Map();  // zone.id -> { zone, entries: [{task, ob}] }，跨任务去重
@@ -335,7 +351,8 @@ function findAndDraw(tasksData, tr) {
       fillColor: "#ffd54a",
       fillOpacity: 0.15,
       className: "zone-focus",
-    }).addTo(map).bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+    }).addTo(map);
+    bindFocusPopup(poly, entries, tr, floor);
     trackFocus(poly, floor,
       { opacity: 1, fillOpacity: 0.15 },
       { opacity: 0.15, fillOpacity: 0.03 });
@@ -348,7 +365,8 @@ function findAndDraw(tasksData, tr) {
       weight: 2,
       fillColor: "#ff5252",
       fillOpacity: 0.8,
-    }).addTo(map).bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+    }).addTo(map);
+    bindFocusPopup(marker, entries, tr, floor);
     trackFocus(marker, floor,
       { opacity: 1, fillOpacity: 0.8 },
       { opacity: 0.15, fillOpacity: 0.1 });

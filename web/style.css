@@ -133,6 +133,10 @@ html, body {
   color: #ffd54a;
 }
 
+.focus-popup .leaflet-popup-content {
+  cursor: pointer;
+}
+
 .leaflet-container a.leaflet-popup-close-button {
   color: #999;
 }
