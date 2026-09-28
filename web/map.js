@@ -463,10 +463,11 @@ async function main() {
   addLabels(mapData);
   setFloor(null);  // 应用初始标签可见性：完全属于某楼层的标签在主层隐藏
 
-  // 点击地图空白处（事件不是从聚焦高亮传播来的）关闭所有气泡；
-  // 点击高亮由 bindFocusPopup 处理（关其他气泡 + 切层）
+  // 点击地图空白处关闭所有气泡。注意不能用 propagatedFrom 判断：
+  // 点击高亮时地图容器也作为直接目标触发一次 click（无 propagatedFrom），
+  // 所以统一用点击坐标是否落在某个高亮内来区分（与循环切换的几何判定一致）
   map.on("click", (e) => {
-    if (e.propagatedFrom && focusLayers.includes(e.propagatedFrom)) return;
+    if (e.latlng && focusLayers.some((l) => l.getPopup() && layerContainsPoint(l, e.latlng))) return;
     for (const l of focusLayers) l.closePopup();
   });
 
