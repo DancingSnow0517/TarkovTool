@@ -449,7 +449,7 @@ async function main() {
     attributionControl: false,
     zoomControl: true,
   });
-  map.fitBounds(mapBounds);
+  map.fitBounds(mapBounds, { animate: false });
 
   const useSvg = mapData.svgPath && styleParam !== "tile";
   const useTile = mapData.tilePath && (styleParam === "tile" || !mapData.svgPath);
@@ -486,8 +486,9 @@ async function main() {
     const floors = new Set(focusLayers.map((l) => l._floor || null));
     setFloor(floors.size === 1 ? [...floors][0] : null);
     const group = L.featureGroup(focusLayers);
-    // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应
-    map.fitBounds(group.getBounds().pad(qIds.length > 1 ? 0.3 : 2), { maxZoom: mapData.maxZoom });
+    // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应。
+    // animate:false：缩放动画中气泡位置是变换中的中间值，去遮挡检测会拿到错误位置
+    map.fitBounds(group.getBounds().pad(qIds.length > 1 ? 0.3 : 2), { maxZoom: mapData.maxZoom, animate: false });
     // 所有点位都弹出自说明气泡（autoClose:false 保证同时可见）；
     // 距离太近互相遮挡的气泡只保留先打开的，其余点击高亮区域查看
     const keptRects = [];
