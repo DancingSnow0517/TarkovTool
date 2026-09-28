@@ -1,0 +1,85 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #1a1b1e;
+}
+
+#map {
+  width: 100%;
+  height: 100vh;
+  background: #1a1b1e;
+}
+
+#topbar {
+  position: absolute;
+  top: 10px;
+  left: 50px;
+  z-index: 1000;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: rgba(20, 21, 24, 0.85);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #d8d8d8;
+  font: 13px/1.4 sans-serif;
+}
+
+#topbar select {
+  background: #24252a;
+  color: #d8d8d8;
+  border: 1px solid #3a3b40;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+#status:empty {
+  display: none;
+}
+
+/* SVG 地图：非当前楼层的分组隐藏（移植自 tarkov-dev） */
+.hidden-layer {
+  display: none;
+}
+
+/* 地图区域文字标签（基准 20px，标签 size 字段为百分比） */
+.map-area-label {
+  font-size: 20px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.map-area-label .label {
+  position: absolute;
+  width: 200px;
+  color: rgba(230, 230, 230, 0.75);
+  font-family: sans-serif;
+  white-space: nowrap;
+  text-shadow: 0 0 3px #000;
+  -webkit-text-stroke: 0.5px #000;
+  pointer-events: none;
+}
+
+/* 聚焦目标样式 */
+.zone-focus {
+  filter: drop-shadow(0 0 6px rgba(255, 213, 74, 0.9));
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #24252a;
+  color: #e8e8e8;
+}
+
+.leaflet-popup-content {
+  font: 13px/1.5 sans-serif;
+}
+
+.leaflet-popup-content b {
+  color: #ffd54a;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: #999;
+}
