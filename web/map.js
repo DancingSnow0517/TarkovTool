@@ -296,18 +296,13 @@ function trackFocus(layer, floor, normal, dim) {
 }
 
 function bindFocusPopup(layer, entries, tr, floor) {
-  // autoClose/closeOnClick 关闭，保证多点气泡同时可见；
-  // 点击气泡内容 = 关闭该气泡并切换到点位所在楼层（点 × 按钮不切层）
-  layer.bindPopup(popupHtml(entries, tr, floor),
-    { autoClose: false, closeOnClick: false, className: "focus-popup" });
-  layer.on("popupopen", (e) => {
-    const el = e.popup.getElement();
-    if (!el) return;
-    el.addEventListener("click", (ev) => {
-      if (ev.target.closest(".leaflet-popup-close-button")) return;
-      layer.closePopup();
-      setFloor(layer._floor || null);
-    }, { once: true });
+  // autoClose/closeOnClick:false:初始自动展开的多点气泡保持同时可见;
+  // 之后的关闭统一由点击处理(点空白关全部,点其他高亮只留当前,见 main 中的 map click)
+  layer.bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+  // 点击高亮区域:关掉其他气泡(自己的由 bindPopup 默认行为弹出),并切到该点位所在楼层
+  layer.on("click", () => {
+    for (const l of focusLayers) if (l !== layer) l.closePopup();
+    setFloor(layer._floor || null);
   });
 }
 
@@ -435,6 +430,13 @@ async function main() {
   }
   addLabels(mapData);
   setFloor(null);  // 应用初始标签可见性：完全属于某楼层的标签在主层隐藏
+
+  // 点击地图空白处（事件不是从聚焦高亮传播来的）关闭所有气泡；
+  // 点击高亮由 bindFocusPopup 处理（关其他气泡 + 切层）
+  map.on("click", (e) => {
+    if (e.propagatedFrom && focusLayers.includes(e.propagatedFrom)) return;
+    for (const l of focusLayers) l.closePopup();
+  });
 
   if (!qIds.length) {
     setStatus("");
