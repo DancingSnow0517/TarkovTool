@@ -298,15 +298,43 @@ function trackFocus(layer, floor, normal, dim) {
   return layer;
 }
 
+function ringContains(ring, latlng) {
+  // 射线法判断点是否在多边形内（平面坐标足够精确）
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i].lng, yi = ring[i].lat;
+    const xj = ring[j].lng, yj = ring[j].lat;
+    if (((yi > latlng.lat) !== (yj > latlng.lat))
+        && (latlng.lng < ((xj - xi) * (latlng.lat - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function layerContainsPoint(layer, latlng) {
+  if (layer instanceof L.CircleMarker) {
+    const d = map.latLngToLayerPoint(layer.getLatLng())
+      .distanceTo(map.latLngToLayerPoint(latlng));
+    return d <= layer.getRadius() + 4;
+  }
+  return ringContains(layer.getLatLngs()[0], latlng);
+}
+
 function bindFocusPopup(layer, entries, tr, floor) {
   // autoClose/closeOnClick:false:初始自动展开的多点气泡保持同时可见;
   // autoPan:false:打开气泡不拖动地图,保持按全部点位自适应的视图
-  // 之后的关闭统一由点击处理(点空白关全部,点其他高亮只留当前,见 main 中的 map click)
   layer.bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false, autoPan: false });
-  // 点击高亮区域:关掉其他气泡(自己的由 bindPopup 默认行为弹出),并切到该点位所在楼层
-  layer.on("click", () => {
-    for (const l of focusLayers) if (l !== layer) l.closePopup();
-    setFloor(layer._floor || null);
+  // 接管点击（去掉 bindPopup 默认的点击弹出）：
+  // 同一位置叠了多个目标时，点击在它们之间循环切换（气泡 + 楼层）
+  layer.off("click");
+  layer.on("click", (e) => {
+    const stack = focusLayers.filter((l) => l.getPopup() && layerContainsPoint(l, e.latlng));
+    const openIdx = stack.findIndex((l) => l.isPopupOpen());
+    const next = openIdx >= 0 ? stack[(openIdx + 1) % stack.length] : layer;
+    for (const l of focusLayers) l.closePopup();
+    next.openPopup();
+    setFloor(next._floor || null);
   });
 }
 
