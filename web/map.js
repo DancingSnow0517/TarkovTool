@@ -100,7 +100,7 @@ let floorOverlay = null;   // 当前楼层的瓦片叠加层
 let activeFloor = null;    // 当前楼层（null = 主层）
 let floorPanel = null;     // 楼层单选面板
 const focusLayers = [];    // 聚焦绘制物，_floor 记录所属楼层
-const labelMarkers = [];   // 区域标签，_homeFloor 记录完全所属楼层
+const labelMarkers = [];   // 区域标签，_vis 记录楼层可见性
 
 function inExtentBounds(boundsEntry, position) {
   // bounds 条目是游戏坐标的对角点 [[x, z], [x, z], 名称?]
@@ -111,16 +111,17 @@ function inExtentBounds(boundsEntry, position) {
 
 function floorMatch(top, bottom, position, extents) {
   // 移植自 tarkov-dev markerIsOnLayer：高度重叠 + 水平 bounds 包含
+  // 返回 {type: "full"|"partial", bounded: 匹配的 extent 是否带水平 bounds}，不匹配返回 false
   for (const ext of extents || []) {
     const [lo, hi] = ext.height || [-Infinity, Infinity];
     if (top >= lo && bottom < hi) {
       const full = bottom >= lo && top <= hi;
       if (ext.bounds) {
         for (const b of ext.bounds) {
-          if (inExtentBounds(b, position)) return full ? "full" : "partial";
+          if (inExtentBounds(b, position)) return { type: full ? "full" : "partial", bounded: true };
         }
       } else {
-        return full ? "full" : "partial";
+        return { type: full ? "full" : "partial", bounded: false };
       }
     }
   }
@@ -132,10 +133,32 @@ function layerForZone(top, bottom, position) {
   let partial = null;
   for (const layer of mapData.layers || []) {
     const m = floorMatch(top, bottom, position, layer.extents);
-    if (m === "full") return layer;
-    if (m === "partial" && !partial) partial = layer;
+    if (m.type === "full") return layer;
+    if (m.type === "partial" && !partial) partial = layer;
   }
   return partial;
+}
+
+function labelVisibility(top, bottom, position) {
+  // 移植自 tarkov-dev markerIsOnActiveLayer 的标签可见性判定：
+  // fullBounded: 完全落在该层（匹配 extent 带水平 bounds）→ 该层未激活时隐藏
+  // matched: 与该层高度/bounds 有重叠 → 该层激活时显示
+  // onBase: 高度落在主层 heightRange 内 → 主层视图显示
+  const fullBounded = [], matched = [];
+  for (const layer of mapData.layers || []) {
+    const m = floorMatch(top, bottom, position, layer.extents);
+    if (!m) continue;
+    matched.push(layer);
+    if (m.type === "full" && m.bounded) fullBounded.push(layer);
+  }
+  const hr = mapData.heightRange || [-Infinity, Infinity];
+  const onBase = top >= hr[0] && bottom < hr[1];
+  return { fullBounded, matched, onBase };
+}
+
+function labelVisible(v, layer) {
+  for (const l of v.fullBounded) if (l !== layer) return false;
+  return layer ? v.matched.includes(layer) : v.onBase;
 }
 
 function setFloor(layer) {
@@ -169,10 +192,11 @@ function setFloor(layer) {
     const container = baseTileLayer.getContainer();
     if (container) container.classList.toggle("off-level", !!layer);
   }
-  // 标签：完全属于某层的只在该层显示，其余所有层可见（同官方 markerIsOnActiveLayer）
+  // 标签可见性（同官方 markerIsOnActiveLayer + off-level 标签 display:none）：
+  // 完全落在未激活楼层内的一律隐藏；选中楼层时只显示与该层重叠的标签；主层只显示主层高度内的
   for (const m of labelMarkers) {
     const el = m.getElement();
-    if (el) el.style.display = m._homeFloor ? (m._homeFloor === layer ? "" : "none") : "";
+    if (el) el.style.display = labelVisible(m._vis, layer) ? "" : "none";
   }
   // 非当前楼层的聚焦绘制物调暗
   for (const l of focusLayers) {
@@ -222,14 +246,6 @@ function addLabels(mapData) {
     const top = label.top ?? 1000;
     const bottom = label.bottom ?? -1000;
     const position = { x: label.position[0], z: label.position[1] };
-    // 标签完全落在某楼层范围内时归属该层（主层不显示，同官方行为）
-    let home = null;
-    for (const layer of mapData.layers || []) {
-      if (floorMatch(top, bottom, position, layer.extents) === "full") {
-        home = layer;
-        break;
-      }
-    }
     const marker = L.marker(pos(position), {
       icon: L.divIcon({
         html: `<div class="label" style="font-size: ${label.size || 100}%; transform: translate3d(-50%, -50%, 0) rotate(${label.rotation || 0}deg)">${label.text}</div>`,
@@ -238,7 +254,7 @@ function addLabels(mapData) {
       interactive: false,
       zIndexOffset: -100000,
     }).addTo(map);
-    marker._homeFloor = home;
+    marker._vis = labelVisibility(top, bottom, position);
     labelMarkers.push(marker);
   }
 }
