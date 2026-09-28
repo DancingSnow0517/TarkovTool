@@ -1,6 +1,6 @@
 "use strict";
 
-/* 纯静态塔科夫任务地图：?map=<地图key>&q=<区域/任务物品id,逗号分隔>&mode=regular&lang=zh
+/* 纯静态塔科夫任务地图：?map=<地图key>&q=<区域/任务物品id,逗号分隔>&task=<任务id>&mode=regular&lang=zh
  * 坐标系/投影与楼层分层逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)。 */
 
 const MAP_ALIASES = {
@@ -14,6 +14,7 @@ const JSON_BASE = "https://json.tarkov.dev";
 const params = new URLSearchParams(location.search);
 const mapParam = MAP_ALIASES[params.get("map")] || params.get("map") || "customs";
 const qIds = (params.get("q") || "").split(",").filter(Boolean);
+const taskParam = params.get("task") || "";  // 指定任务 id 时只匹配该任务的目标
 const gameMode = params.get("mode") || "regular";
 const lang = params.get("lang") || "zh";
 const styleParam = params.get("style") || "";
@@ -275,11 +276,15 @@ function zoneLatLngs(zone) {
   ];
 }
 
-function popupHtml(task, ob, tr, floor) {
-  const name = tr[task.name] || task.normalizedName || task.name;
-  const desc = tr[ob.description] || ob.description;
+function popupHtml(entries, tr, floor) {
+  // 一个点位可能被多个任务/目标复用，气泡内逐条列出
+  const body = entries.map(({ task, ob }) => {
+    const name = tr[task.name] || task.normalizedName || task.name;
+    const desc = tr[ob.description] || ob.description;
+    return `<b>${name}</b><br>${desc}`;
+  }).join("<hr>");
   const floorLine = floor ? `<br><i>楼层: ${floor.name}</i>` : "";
-  return `<b>${name}</b><br>${desc}${floorLine}`;
+  return body + floorLine;
 }
 
 function trackFocus(layer, floor, normal, dim) {
@@ -292,49 +297,61 @@ function trackFocus(layer, floor, normal, dim) {
 
 function findAndDraw(tasksData, tr) {
   const missing = [];
+  const zoneHits = new Map();  // zone.id -> { zone, entries: [{task, ob}] }，跨任务去重
+  const itemHits = new Map();  // "x,z" -> { p, entries }
   for (const qid of qIds) {
     let found = false;
     for (const task of Object.values(tasksData.tasks)) {
+      if (taskParam && task.id !== taskParam) continue;
       for (const ob of task.objectives || []) {
         for (const zone of ob.zones || []) {
           if (zone.id !== qid || !mapData.apiIds.includes(zone.map)) continue;
           found = true;
-          const top = zone.top ?? zone.position.y;
-          const bottom = zone.bottom ?? zone.position.y;
-          const floor = layerForZone(top, bottom, zone.position);
-          const poly = L.polygon(zoneLatLngs(zone), {
-            color: "#ffd54a",
-            weight: 3,
-            fillColor: "#ffd54a",
-            fillOpacity: 0.15,
-            className: "zone-focus",
-          }).addTo(map).bindPopup(popupHtml(task, ob, tr, floor));
-          trackFocus(poly, floor,
-            { opacity: 1, fillOpacity: 0.15 },
-            { opacity: 0.15, fillOpacity: 0.03 });
+          if (!zoneHits.has(zone.id)) zoneHits.set(zone.id, { zone, entries: [] });
+          zoneHits.get(zone.id).entries.push({ task, ob });
         }
         if (ob.questItem === qid) {
           for (const loc of ob.possibleLocations || []) {
             if (!mapData.apiIds.includes(loc.map)) continue;
             for (const p of loc.positions || []) {
               found = true;
-              const floor = layerForZone(p.y, p.y, p);
-              const marker = L.circleMarker(pos(p), {
-                radius: 6,
-                color: "#ff5252",
-                weight: 2,
-                fillColor: "#ff5252",
-                fillOpacity: 0.8,
-              }).addTo(map).bindPopup(popupHtml(task, ob, tr, floor));
-              trackFocus(marker, floor,
-                { opacity: 1, fillOpacity: 0.8 },
-                { opacity: 0.15, fillOpacity: 0.1 });
+              const k = `${p.x},${p.z}`;
+              if (!itemHits.has(k)) itemHits.set(k, { p, entries: [] });
+              itemHits.get(k).entries.push({ task, ob });
             }
           }
         }
       }
     }
     if (!found) missing.push(qid);
+  }
+  for (const { zone, entries } of zoneHits.values()) {
+    const top = zone.top ?? zone.position.y;
+    const bottom = zone.bottom ?? zone.position.y;
+    const floor = layerForZone(top, bottom, zone.position);
+    const poly = L.polygon(zoneLatLngs(zone), {
+      color: "#ffd54a",
+      weight: 3,
+      fillColor: "#ffd54a",
+      fillOpacity: 0.15,
+      className: "zone-focus",
+    }).addTo(map).bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+    trackFocus(poly, floor,
+      { opacity: 1, fillOpacity: 0.15 },
+      { opacity: 0.15, fillOpacity: 0.03 });
+  }
+  for (const { p, entries } of itemHits.values()) {
+    const floor = layerForZone(p.y, p.y, p);
+    const marker = L.circleMarker(pos(p), {
+      radius: 6,
+      color: "#ff5252",
+      weight: 2,
+      fillColor: "#ff5252",
+      fillOpacity: 0.8,
+    }).addTo(map).bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+    trackFocus(marker, floor,
+      { opacity: 1, fillOpacity: 0.8 },
+      { opacity: 0.15, fillOpacity: 0.1 });
   }
   return missing;
 }
@@ -415,9 +432,10 @@ async function main() {
     // 自动切到第一个目标所在楼层
     setFloor(focusLayers[0]._floor || null);
     const group = L.featureGroup(focusLayers);
-    map.fitBounds(group.getBounds().pad(2), { maxZoom: mapData.maxZoom });
-    const first = focusLayers.find((l) => l.getPopup());
-    if (first) first.openPopup();
+    // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应
+    map.fitBounds(group.getBounds().pad(qIds.length > 1 ? 0.3 : 2), { maxZoom: mapData.maxZoom });
+    // 所有点位都弹出自说明气泡（autoClose:false 保证同时可见）
+    for (const l of focusLayers) if (l.getPopup()) l.openPopup();
     setStatus(missing.length ? `未找到: ${missing.join(", ")}` : "");
   } else {
     setStatus(`未找到目标: ${qIds.join(", ")}`);

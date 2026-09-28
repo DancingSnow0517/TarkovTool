@@ -602,11 +602,14 @@ def load_tasks(mode: str, lang: str, quiet: bool = False) -> dict:
 MAP_PAGE_URL = "https://map.dancingsnow.xyz"
 
 
-def map_link(map_key: str, qid: str, mode: str, lang: str) -> str:
-    """目标定位链接：默认指向自建静态地图页，可用 --map-url 覆盖。"""
+def map_link(map_key: str, qid: str, mode: str, lang: str, task_id: str = "") -> str:
+    """目标定位链接：默认指向自建静态地图页，可用 --map-url 覆盖。task_id 让地图页只显示该任务的目标。"""
     base = (load_config().get("map_url") or "").strip() or MAP_PAGE_URL
     sep = "&" if "?" in base else "?"
-    return f"{base}{sep}map={map_key}&q={qid}&mode={mode}&lang={lang}"
+    url = f"{base}{sep}map={map_key}&q={qid}&mode={mode}&lang={lang}"
+    if task_id:
+        url += f"&task={task_id}"
+    return url
 
 
 def make_task_row(task: dict, td: dict, trader_tr: dict, traders: dict) -> dict:
@@ -681,26 +684,28 @@ class TaskListPager(SearchPager):
             )
         return table
 
-    def objective_links(self, ob: dict) -> list:
-        """任务目标有坐标时生成互动地图链接（默认 tarkov.dev ?q=，配置 map_url 后指向自建地图页）。"""
+    def task_map_links(self, task: dict) -> list:
+        """汇总任务所有目标的坐标点，按地图分组：每张地图一条链接，q 携带该图全部点位。"""
         map_keys, map_tr = self.td["map_keys"], self.td["map_tr"]
         mode, lang = self.td["mode"], self.td["lang"]
-        links, seen = [], set()
-        for z in ob.get("zones") or []:
-            key = map_keys.get(z.get("map"))
-            if key and (z["map"], z["id"]) not in seen:
-                seen.add((z["map"], z["id"]))
-                links.append((translate(f"{z['map']} Name", map_tr),
-                              map_link(key, z["id"], mode, lang)))
-        quest_item = ob.get("questItem")
-        if quest_item:
-            for loc in ob.get("possibleLocations") or []:
-                key = map_keys.get(loc.get("map"))
-                if key and ("item", loc["map"]) not in seen:
-                    seen.add(("item", loc["map"]))
-                    links.append((translate(f"{loc['map']} Name", map_tr),
-                                  map_link(key, quest_item, mode, lang)))
-        return links
+        by_map = {}
+        for ob in task.get("objectives", []):
+            for z in ob.get("zones") or []:
+                key = map_keys.get(z.get("map"))
+                if key:
+                    qids = by_map.setdefault(z["map"], (key, []))[1]
+                    if z["id"] not in qids:
+                        qids.append(z["id"])
+            quest_item = ob.get("questItem")
+            if quest_item:
+                for loc in ob.get("possibleLocations") or []:
+                    key = map_keys.get(loc.get("map"))
+                    if key:
+                        qids = by_map.setdefault(loc["map"], (key, []))[1]
+                        if quest_item not in qids:
+                            qids.append(quest_item)
+        return [(translate(f"{mid} Name", map_tr), map_link(key, ",".join(qids), mode, lang, task["id"]))
+                for mid, (key, qids) in by_map.items()]
 
     def build_detail(self, row: dict, width: int) -> str:
         task = row["task"]
@@ -727,14 +732,15 @@ class TaskListPager(SearchPager):
             if ob.get("optional"):
                 text += " (可选)"
             out.print(f"• {text}")
-            links = self.objective_links(ob)
-            if links:
-                line = Text("  ↳ 地图: ")
-                for i, (map_name, url) in enumerate(links):
-                    if i:
-                        line.append(" | ")
-                    line.append(map_name, style=f"link {url}")
-                out.print(line)
+        links = self.task_map_links(task)
+        if links:
+            out.print("")
+            line = Text("地图: ", style="bold")
+            for i, (map_name, url) in enumerate(links):
+                if i:
+                    line.append(" | ")
+                line.append(map_name, style=f"link {url}")
+            out.print(line)
         return buf.getvalue()
 
     def render(self, width: int, height: int) -> str:
