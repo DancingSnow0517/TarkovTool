@@ -95,9 +95,12 @@ let map = null;
 let mapData = null;
 let mapBounds = null;
 let svgRoot = null;        // 内联 SVG 的根节点（仅 SVG 底图）
+let baseTileLayer = null;  // 瓦片底图（仅瓦片底图）
 let floorOverlay = null;   // 当前楼层的瓦片叠加层
 let activeFloor = null;    // 当前楼层（null = 主层）
+let floorPanel = null;     // 楼层单选面板
 const focusLayers = [];    // 聚焦绘制物，_floor 记录所属楼层
+const labelMarkers = [];   // 区域标签，_homeFloor 记录完全所属楼层
 
 function inExtentBounds(boundsEntry, position) {
   // bounds 条目是游戏坐标的对角点 [[x, z], [x, z], 名称?]
@@ -161,14 +164,25 @@ function setFloor(layer) {
       maxNativeZoom: mapData.maxZoom,
     }).addTo(map);
   }
+  // 瓦片底图在非主层时调暗
+  if (baseTileLayer) {
+    const container = baseTileLayer.getContainer();
+    if (container) container.classList.toggle("off-level", !!layer);
+  }
+  // 标签：完全属于某层的只在该层显示，其余所有层可见（同官方 markerIsOnActiveLayer）
+  for (const m of labelMarkers) {
+    const el = m.getElement();
+    if (el) el.style.display = m._homeFloor ? (m._homeFloor === layer ? "" : "none") : "";
+  }
   // 非当前楼层的聚焦绘制物调暗
   for (const l of focusLayers) {
     const onFloor = (l._floor || null) === layer;
     l.setStyle(onFloor ? l._normal : l._dim);
   }
-  const select = document.getElementById("floor-select");
-  if (select.options.length) {
-    select.value = layer ? String(mapData.layers.indexOf(layer)) : "";
+  // 面板选中态
+  if (floorPanel) {
+    [...floorPanel.children].forEach((el, i) =>
+      el.classList.toggle("active", mapData.layers[i] === layer));
   }
 }
 
@@ -194,7 +208,7 @@ async function addSvgLayer(mapData, bounds) {
 }
 
 function addTileLayer(mapData, bounds) {
-  L.tileLayer(mapData.tilePath, {
+  baseTileLayer = L.tileLayer(mapData.tilePath, {
     tileSize: mapData.tileSize || 256,
     bounds,
     maxZoom: Math.max(7, mapData.maxZoom),
@@ -205,7 +219,18 @@ function addTileLayer(mapData, bounds) {
 function addLabels(mapData) {
   if (!mapData.labels || !mapData.labels.length) return;
   for (const label of mapData.labels) {
-    L.marker(pos({ x: label.position[0], z: label.position[1] }), {
+    const top = label.top ?? 1000;
+    const bottom = label.bottom ?? -1000;
+    const position = { x: label.position[0], z: label.position[1] };
+    // 标签完全落在某楼层范围内时归属该层（主层不显示，同官方行为）
+    let home = null;
+    for (const layer of mapData.layers || []) {
+      if (floorMatch(top, bottom, position, layer.extents) === "full") {
+        home = layer;
+        break;
+      }
+    }
+    const marker = L.marker(pos(position), {
       icon: L.divIcon({
         html: `<div class="label" style="font-size: ${label.size || 100}%; transform: translate3d(-50%, -50%, 0) rotate(${label.rotation || 0}deg)">${label.text}</div>`,
         className: "map-area-label",
@@ -213,6 +238,8 @@ function addLabels(mapData) {
       interactive: false,
       zIndexOffset: -100000,
     }).addTo(map);
+    marker._homeFloor = home;
+    labelMarkers.push(marker);
   }
 }
 
@@ -322,15 +349,17 @@ async function main() {
     else params.delete("style");
     location.search = params.toString();
   };
-  const floorSelect = document.getElementById("floor-select");
+  floorPanel = document.getElementById("floor-panel");
   if (mapData.layers && mapData.layers.length) {
-    const baseName = (mapData.svgLayer || "Main").replace(/_/g, " ");
-    floorSelect.appendChild(new Option(baseName, ""));
-    mapData.layers.forEach((l, i) => floorSelect.appendChild(new Option(l.name, String(i))));
-    floorSelect.hidden = false;
-    floorSelect.onchange = () => {
-      setFloor(floorSelect.value === "" ? null : mapData.layers[Number(floorSelect.value)]);
-    };
+    // 纵向单选楼层（不含地面层），再次点击已选楼层取消选择回到地面层
+    mapData.layers.forEach((layer) => {
+      const row = document.createElement("div");
+      row.className = "floor-item";
+      row.innerHTML = `<span class="dot"></span><span>${layer.name}</span>`;
+      row.onclick = () => setFloor(activeFloor === layer ? null : layer);
+      floorPanel.appendChild(row);
+    });
+    floorPanel.hidden = false;
   }
 
   mapBounds = getBounds(mapData.bounds);
@@ -354,6 +383,7 @@ async function main() {
     if (mapData.tilePath) addTileLayer(mapData, mapBounds);
   }
   addLabels(mapData);
+  setFloor(null);  // 应用初始标签可见性：完全属于某楼层的标签在主层隐藏
 
   if (!qIds.length) {
     setStatus("");

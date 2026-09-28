@@ -43,8 +43,56 @@ html, body {
   display: none;
 }
 
-/* 切到非主层时，基底分组调暗（移植自 tarkov-dev 的 off-level 样式） */
+/* 楼层单选面板：缩放按钮下方纵向排列 */
+#floor-panel {
+  position: absolute;
+  top: 86px;
+  left: 10px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: rgba(20, 21, 24, 0.85);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 4px;
+  color: #d8d8d8;
+  font: 13px/1.4 sans-serif;
+  min-width: 130px;
+}
+
+.floor-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.floor-item:hover {
+  background: #2e2f35;
+}
+
+.floor-item .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid #777;
+  flex: none;
+}
+
+.floor-item.active .dot {
+  background: #ffd54a;
+  border-color: #ffd54a;
+}
+
+/* 切到非主层时，基底分组/瓦片调暗（移植自 tarkov-dev 的 off-level 样式） */
 #map svg.off-level g.base-layer {
+  opacity: 0.2;
+}
+
+.leaflet-layer.off-level .leaflet-tile-container {
   opacity: 0.2;
 }
 
