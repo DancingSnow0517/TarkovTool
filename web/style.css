@@ -60,6 +60,10 @@ html, body {
   min-width: 130px;
 }
 
+#floor-panel[hidden] {
+  display: none;
+}
+
 .floor-item {
   display: flex;
   align-items: center;
