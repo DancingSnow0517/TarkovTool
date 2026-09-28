@@ -129,15 +129,13 @@ function floorMatch(top, bottom, position, extents) {
   return false;
 }
 
-function layerForZone(top, bottom, position) {
-  // 完全包含优先（官方会把完全落在某层的标记从主层隐藏）；否则归到首个部分重叠的楼层
-  let partial = null;
+function layerForZone(position) {
+  // 楼层归属按触发区域中心高度（position.y）判定：
+  // 大体积触发区的 top/bottom 常横跨多层（部分重叠会误判），中心高度才是实际所在层
   for (const layer of mapData.layers || []) {
-    const m = floorMatch(top, bottom, position, layer.extents);
-    if (m.type === "full") return layer;
-    if (m.type === "partial" && !partial) partial = layer;
+    if (floorMatch(position.y, position.y, position, layer.extents)) return layer;
   }
-  return partial;
+  return null;
 }
 
 function labelVisibility(top, bottom, position) {
@@ -369,9 +367,7 @@ function findAndDraw(tasksData, tr) {
     if (!found) missing.push(qid);
   }
   for (const { zone, entries } of zoneHits.values()) {
-    const top = zone.top ?? zone.position.y;
-    const bottom = zone.bottom ?? zone.position.y;
-    const floor = layerForZone(top, bottom, zone.position);
+    const floor = layerForZone(zone.position);
     const poly = L.polygon(zoneLatLngs(zone), {
       color: "#ffd54a",
       weight: 3,
@@ -385,7 +381,7 @@ function findAndDraw(tasksData, tr) {
       { opacity: 0.15, fillOpacity: 0.03 });
   }
   for (const { p, entries } of itemHits.values()) {
-    const floor = layerForZone(p.y, p.y, p);
+    const floor = layerForZone(p);
     const marker = L.circleMarker(pos(p), {
       radius: 6,
       color: "#ff5252",
