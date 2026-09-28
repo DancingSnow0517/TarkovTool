@@ -277,14 +277,17 @@ function zoneLatLngs(zone) {
 }
 
 function popupHtml(entries, tr, floor) {
-  // 一个点位可能被多个任务/目标复用，气泡内逐条列出
-  const body = entries.map(({ task, ob }) => {
+  // 一个点位可能被多个任务/目标复用，气泡内逐条列出；
+  // 不同目标译文相同时（如"找到"+"标记"译成同一句）只显示一次
+  const bodies = [];
+  for (const { task, ob } of entries) {
     const name = tr[task.name] || task.normalizedName || task.name;
     const desc = tr[ob.description] || ob.description;
-    return `<b>${name}</b><br>${desc}`;
-  }).join("<hr>");
+    const s = `<b>${name}</b><br>${desc}`;
+    if (!bodies.includes(s)) bodies.push(s);
+  }
   const floorLine = floor ? `<br><i>楼层: ${floor.name}</i>` : "";
-  return body + floorLine;
+  return bodies.join("<hr>") + floorLine;
 }
 
 function trackFocus(layer, floor, normal, dim) {
@@ -297,8 +300,9 @@ function trackFocus(layer, floor, normal, dim) {
 
 function bindFocusPopup(layer, entries, tr, floor) {
   // autoClose/closeOnClick:false:初始自动展开的多点气泡保持同时可见;
+  // autoPan:false:打开气泡不拖动地图,保持按全部点位自适应的视图
   // 之后的关闭统一由点击处理(点空白关全部,点其他高亮只留当前,见 main 中的 map click)
-  layer.bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false });
+  layer.bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false, autoPan: false });
   // 点击高亮区域:关掉其他气泡(自己的由 bindPopup 默认行为弹出),并切到该点位所在楼层
   layer.on("click", () => {
     for (const l of focusLayers) if (l !== layer) l.closePopup();
@@ -449,13 +453,27 @@ async function main() {
   const missing = findAndDraw(tasksData, tr);
 
   if (focusLayers.length) {
-    // 自动切到第一个目标所在楼层
-    setFloor(focusLayers[0]._floor || null);
+    // 只有所有点位在同一楼层时才自动切层，否则保持主层视图
+    const floors = new Set(focusLayers.map((l) => l._floor || null));
+    setFloor(floors.size === 1 ? [...floors][0] : null);
     const group = L.featureGroup(focusLayers);
     // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应
     map.fitBounds(group.getBounds().pad(qIds.length > 1 ? 0.3 : 2), { maxZoom: mapData.maxZoom });
-    // 所有点位都弹出自说明气泡（autoClose:false 保证同时可见）
-    for (const l of focusLayers) if (l.getPopup()) l.openPopup();
+    // 所有点位都弹出自说明气泡（autoClose:false 保证同时可见）；
+    // 距离太近互相遮挡的气泡只保留先打开的，其余点击高亮区域查看
+    const keptRects = [];
+    for (const l of focusLayers) {
+      const popup = l.getPopup();
+      if (!popup) continue;
+      l.openPopup();
+      const el = popup.getElement();
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const overlap = keptRects.some((k) =>
+        !(r.right < k.left || r.left > k.right || r.bottom < k.top || r.top > k.bottom));
+      if (overlap) l.closePopup();
+      else keptRects.push(r);
+    }
     setStatus(missing.length ? `未找到: ${missing.join(", ")}` : "");
   } else {
     setStatus(`未找到目标: ${qIds.join(", ")}`);
