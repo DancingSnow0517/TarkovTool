@@ -599,13 +599,14 @@ def load_tasks(mode: str, lang: str, quiet: bool = False) -> dict:
     }
 
 
+MAP_PAGE_URL = "https://map.dancingsnow.xyz"
+
+
 def map_link(map_key: str, qid: str, mode: str, lang: str) -> str:
-    """目标定位链接：配置了 map_url（自建静态地图页）就指向它，否则回退 tarkov.dev。"""
-    base = load_config().get("map_url", "").strip()
-    if base:
-        sep = "&" if "?" in base else "?"
-        return f"{base}{sep}map={map_key}&q={qid}&mode={mode}&lang={lang}"
-    return f"https://tarkov.dev/map/{map_key}?q={qid}"
+    """目标定位链接：默认指向自建静态地图页，可用 --map-url 覆盖。"""
+    base = (load_config().get("map_url") or "").strip() or MAP_PAGE_URL
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}map={map_key}&q={qid}&mode={mode}&lang={lang}"
 
 
 def make_task_row(task: dict, td: dict, trader_tr: dict, traders: dict) -> dict:

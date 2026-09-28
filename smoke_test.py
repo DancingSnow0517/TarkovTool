@@ -76,7 +76,8 @@ check("task search filters", wait_fresh("新手上路", 15))
 new_mark()
 send("\r", 1.0)
 check("task detail shown", wait_fresh("Wiki:", 15))
-check("detail map link", "tarkov.dev/map/ground-zero?q=" in fresh_text()
+check("detail map link", "map.dancingsnow.xyz" in fresh_text()
+      and "map=ground-zero" in fresh_text()
       and "q=Sandbox_1_MedicalArea_exploration" in fresh_text())
 send("\x1b", 0.8)  # 详情返回列表
 send("\x1b", 0.8)  # 列表返回菜单
