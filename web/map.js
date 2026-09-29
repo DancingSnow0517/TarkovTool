@@ -21,6 +21,35 @@ const styleParam = params.get("style") || "";
 
 const statusEl = document.getElementById("status");
 const setStatus = (msg) => { statusEl.textContent = msg; };
+const zoomInfoEl = document.getElementById("zoom-info");
+const raidTimeEl = document.getElementById("raid-time");
+
+/* ---- 游戏内时间（移植自 tarkov-dev src/components/Time.jsx） ---- */
+
+function tarkovTime(left) {
+  // 现实 1 秒 = 游戏 7 秒；游戏零点不对齐 unix 0，而是对齐莫斯科时区（UTC+3）。
+  // 左/右两个战局时间相差 12 小时
+  const hrs = (n) => n * 3600 * 1000;
+  const t = (hrs(3) + (left ? 0 : hrs(12)) + Date.now() * 7) % hrs(24);
+  const d = new Date(t);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+function startRaidTime(mapKey) {
+  // 工厂/夜间工厂时间固定；实验室只有一个时间段
+  if (mapKey === "factory") {
+    raidTimeEl.textContent = "15:28:00 / 03:28:00";
+    return;
+  }
+  const update = () => {
+    raidTimeEl.textContent = mapKey === "the-lab"
+      ? tarkovTime(true)
+      : `${tarkovTime(true)} / ${tarkovTime(false)}`;
+  };
+  update();
+  setInterval(update, 100);
+}
 
 /* ---- 坐标系（移植自 tarkov-dev） ---- */
 
@@ -482,6 +511,10 @@ async function main() {
     zoomControl: true,
   });
   map.fitBounds(mapBounds, { animate: false });
+  const updateZoom = () => { zoomInfoEl.textContent = `缩放: ${map.getZoom().toFixed(1)}`; };
+  map.on("zoomend", updateZoom);
+  updateZoom();
+  startRaidTime(mapData.key);
 
   const useSvg = mapData.svgPath && styleParam !== "tile";
   const useTile = mapData.tilePath && (styleParam === "tile" || !mapData.svgPath);

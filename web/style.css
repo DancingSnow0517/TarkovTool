@@ -38,6 +38,13 @@ html, body {
   display: none;
 }
 
+#zoom-info,
+#raid-time {
+  white-space: nowrap;
+  color: #9d9d9d;
+  font-variant-numeric: tabular-nums;
+}
+
 /* SVG 地图：非当前楼层的分组隐藏（移植自 tarkov-dev） */
 .hidden-layer {
   display: none;
