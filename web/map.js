@@ -9,7 +9,10 @@ const MAP_ALIASES = {
   "the-lab-dark": "the-lab",
 };
 const CACHE_TTL = 7 * 24 * 3600 * 1000;
-const JSON_BASE = "https://json.tarkov.dev";
+// 任务数据静态存放在 web/data/（由 update_data.py 从 json.tarkov.dev 同步）；
+// 更新数据后脚本会刷新 DATA_VERSION，避免 localStorage 缓存到旧数据
+const DATA_VERSION = "20260929";
+const DATA_BASE = "data";
 
 const params = new URLSearchParams(location.search);
 const mapParam = MAP_ALIASES[params.get("map")] || params.get("map") || "customs";
@@ -543,8 +546,8 @@ async function main() {
   }
 
   setStatus("加载任务数据 ...");
-  const tasksData = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks`)).data;
-  const tr = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks_${lang}`)).data;
+  const tasksData = (await fetchCached(`${DATA_BASE}/${gameMode}/tasks.json?v=${DATA_VERSION}`)).data;
+  const tr = (await fetchCached(`${DATA_BASE}/${gameMode}/tasks_${lang}.json?v=${DATA_VERSION}`)).data;
   const missing = findAndDraw(tasksData, tr);
   buildObjectiveList(tr);
 
