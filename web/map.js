@@ -100,6 +100,7 @@ let baseTileLayer = null;  // 瓦片底图（仅瓦片底图）
 let floorOverlay = null;   // 当前楼层的瓦片叠加层
 let activeFloor = null;    // 当前楼层（null = 主层）
 let floorPanel = null;     // 楼层单选面板
+let objPanel = null;       // 任务目标列表面板
 const focusLayers = [];    // 聚焦绘制物，_floor 记录所属楼层
 const labelMarkers = [];   // 区域标签，_vis 记录楼层可见性
 
@@ -274,8 +275,8 @@ function zoneLatLngs(zone) {
   ];
 }
 
-function popupHtml(entries, tr, floor) {
-  // 一个点位可能被多个任务/目标复用，气泡内逐条列出；
+function entryBodies(entries, tr) {
+  // 一个点位可能被多个任务/目标复用，逐条列出；
   // 不同目标译文相同时（如"找到"+"标记"译成同一句）只显示一次
   const bodies = [];
   for (const { task, ob } of entries) {
@@ -284,8 +285,12 @@ function popupHtml(entries, tr, floor) {
     const s = `<b>${name}</b><br>${desc}`;
     if (!bodies.includes(s)) bodies.push(s);
   }
+  return bodies;
+}
+
+function popupHtml(entries, tr, floor) {
   const floorLine = floor ? `<br><i>楼层: ${floor.name}</i>` : "";
-  return bodies.join("<hr>") + floorLine;
+  return entryBodies(entries, tr).join("<hr>") + floorLine;
 }
 
 function trackFocus(layer, floor, normal, dim) {
@@ -323,6 +328,7 @@ function bindFocusPopup(layer, entries, tr, floor) {
   // autoClose/closeOnClick:false:初始自动展开的多点气泡保持同时可见;
   // autoPan:false:打开气泡不拖动地图,保持按全部点位自适应的视图
   layer.bindPopup(popupHtml(entries, tr, floor), { autoClose: false, closeOnClick: false, autoPan: false });
+  layer._entries = entries;
   // 接管点击（去掉 bindPopup 默认的点击弹出）：
   // 同一位置叠了多个目标时，点击在它们之间循环切换（气泡 + 楼层）
   layer.off("click");
@@ -334,6 +340,35 @@ function bindFocusPopup(layer, entries, tr, floor) {
     next.openPopup();
     setFloor(next._floor || null);
   });
+}
+
+/* ---- 目标列表面板 ---- */
+
+function focusObjective(layer, row) {
+  // 单聚焦一个目标：切到所在楼层、缩放到该目标并弹出气泡
+  objPanel.querySelectorAll(".obj-item.active").forEach((el) => el.classList.remove("active"));
+  row.classList.add("active");
+  for (const l of focusLayers) l.closePopup();
+  setFloor(layer._floor || null);
+  map.fitBounds(layer.getBounds().pad(0.5), { maxZoom: mapData.maxZoom, animate: false });
+  layer.openPopup();
+}
+
+function buildObjectiveList(tr) {
+  objPanel.innerHTML = "";
+  if (!focusLayers.length) return;
+  for (const layer of focusLayers) {
+    const row = document.createElement("div");
+    row.className = "obj-item";
+    row.innerHTML = entryBodies(layer._entries, tr).join("<hr>");
+    row.onclick = () => focusObjective(layer, row);
+    objPanel.appendChild(row);
+  }
+  // 面板贴在楼层选择器下面（无楼层地图则贴缩放按钮下面）
+  const top = floorPanel.hidden ? 86 : floorPanel.offsetTop + floorPanel.offsetHeight + 8;
+  objPanel.style.top = `${top}px`;
+  objPanel.style.maxHeight = `${window.innerHeight - top - 16}px`;
+  objPanel.hidden = false;
 }
 
 function findAndDraw(tasksData, tr) {
@@ -424,6 +459,7 @@ async function main() {
     location.search = params.toString();
   };
   floorPanel = document.getElementById("floor-panel");
+  objPanel = document.getElementById("obj-panel");
   if (mapData.layers && mapData.layers.length) {
     // 纵向单选楼层（不含地面层），再次点击已选楼层取消选择回到地面层
     mapData.layers.forEach((layer) => {
@@ -465,6 +501,7 @@ async function main() {
   map.on("click", (e) => {
     if (e.latlng && focusLayers.some((l) => l.getPopup() && layerContainsPoint(l, e.latlng))) return;
     for (const l of focusLayers) l.closePopup();
+    objPanel.querySelectorAll(".obj-item.active").forEach((el) => el.classList.remove("active"));
   });
 
   if (!qIds.length) {
@@ -476,6 +513,7 @@ async function main() {
   const tasksData = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks`)).data;
   const tr = (await fetchCached(`${JSON_BASE}/${gameMode}/tasks_${lang}`)).data;
   const missing = findAndDraw(tasksData, tr);
+  buildObjectiveList(tr);
 
   if (focusLayers.length) {
     // 只有所有点位在同一楼层时才自动切层，否则保持主层视图
