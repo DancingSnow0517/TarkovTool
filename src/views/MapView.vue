@@ -10,7 +10,6 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchCached } from "@/api/client";
 import { useConfigStore } from "@/stores/config";
-import { MAP_ALIASES } from "@/utils/maps";
 import type {
   MapData,
   MapExtent,
@@ -598,7 +597,7 @@ let taskParam = "";
 async function init() {
   cleanup();
 
-  const mapParam = MAP_ALIASES[queryStr(route.query.map)] || queryStr(route.query.map) || "customs";
+  const mapParam = queryStr(route.query.map) || "customs";
   qIds = queryStr(route.query.q)
     .split(",")
     .filter(Boolean);

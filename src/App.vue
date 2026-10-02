@@ -19,7 +19,6 @@ import {
 import type { MapData } from "@/api/types";
 import { GAME_MODES, LANGUAGES, useConfigStore } from "@/stores/config";
 import { useDataStore } from "@/stores/data";
-import { MAP_ALIASES } from "@/utils/maps";
 
 const route = useRoute();
 const config = useConfigStore();
@@ -62,12 +61,11 @@ const menuOptions = computed<MenuOption[]>(() => [
   },
 ]);
 
-/** 地图页时高亮当前地图的子菜单项（含别名归一与默认 customs） */
+/** 地图页时高亮当前地图的子菜单项（默认 customs） */
 const menuValue = computed(() => {
   if (route.name !== "map") return route.name as string;
   const raw = Array.isArray(route.query.map) ? route.query.map[0] : route.query.map;
-  const key = MAP_ALIASES[raw ?? ""] ?? raw ?? "customs";
-  return `map:${key}`;
+  return `map:${raw ?? "customs"}`;
 });
 
 const modeOptions = GAME_MODES.map((m) => ({ label: m.label, value: m.value }));
