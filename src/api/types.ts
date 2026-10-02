@@ -2,14 +2,30 @@
 
 export interface SellOffer {
   trader: string;
+  price: number;
   priceRUB: number;
+  currency: string;
+}
+
+/** 物品属性明细（propertiesType 区分武器/护甲/弹药等，字段按类型宽松读取） */
+export interface ItemProperties {
+  propertiesType?: string;
+  [key: string]: unknown;
 }
 
 export interface Item {
   id: string;
   name: string;
+  shortName?: string;
   normalizedName?: string;
+  description?: string;
   link?: string;
+  wikiLink?: string;
+  weight?: number;
+  width?: number;
+  height?: number;
+  types?: string[];
+  properties?: ItemProperties | null;
   lastLowPrice?: number | null;
   avg24hPrice?: number | null;
   low24hPrice?: number | null;
@@ -22,8 +38,17 @@ export interface Item {
   gridImageLink?: string | null;
 }
 
+/** 跳蚤市场价格历史点位（/{mode}/prices/{itemId}） */
+export interface PricePoint {
+  priceMin: number;
+  price: number;
+  offerCount: number;
+  timestamp: number;
+}
+
 export interface Trader {
   name?: string;
+  imageLink?: string;
 }
 
 export interface TaskZone {
@@ -44,6 +69,17 @@ export interface TaskLocation {
 
 export interface TaskObjective {
   description?: string;
+  /** 目标动作类型：giveItem/findItem/plantItem/mark/useItem/sellItem/buildWeapon 等 */
+  type?: string;
+  count?: number;
+  /** 目标涉及的物品 id 列表（giveItem/findItem 等） */
+  items?: string[];
+  /** 单个物品 id（buildWeapon 等） */
+  item?: string;
+  /** 标记动作使用的标记物 id（mark） */
+  markerItem?: string;
+  /** 是否要求战局内捡到 */
+  foundInRaid?: boolean;
   optional?: boolean;
   zones?: TaskZone[] | null;
   questItem?: string | null;

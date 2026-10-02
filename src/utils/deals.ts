@@ -70,6 +70,8 @@ export const DEFAULT_ITEM_COLUMNS: ItemColumnKey[] = ["flea", "avg24h", "trader"
 
 export interface ItemRow {
   id: string;
+  /** 原始物品对象，详情弹窗用 */
+  item: Item;
   name: string;
   norm: string;
   en: string;
@@ -96,6 +98,7 @@ export function makeItemRow(item: Item, data: MarketData): ItemRow {
   const name = translate(item.name, data.itemTr);
   return {
     id: item.id,
+    item,
     name,
     norm: item.normalizedName ?? "",
     en: translate(item.name, data.enTr).toLowerCase(),
