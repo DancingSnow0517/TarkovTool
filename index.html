@@ -4,12 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tarkov 工具箱</title>
-<script>
-// 兼容旧版地图外链：map.dancingsnow.xyz/?map=...&q=... → #/map?map=...&q=...
-if (!location.hash && new URLSearchParams(location.search).has("map")) {
-  location.replace(location.pathname + "#/map" + location.search);
-}
-</script>
 </head>
 <body>
 <div id="app"></div>
