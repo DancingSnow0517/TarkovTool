@@ -1,9 +1,19 @@
-name: 部署任务地图到 GitHub Pages
+name: 构建并部署到 GitHub Pages
 
 on:
   push:
     branches: [main]
-    paths: [web/**, .github/workflows/pages.yml]
+    paths:
+      - src/**
+      - public/**
+      - index.html
+      - package.json
+      - pnpm-lock.yaml
+      - vite.config.ts
+      - tsconfig.json
+      - tsconfig.app.json
+      - tsconfig.node.json
+      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -22,9 +32,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: web
+          path: dist
       - id: deployment
         uses: actions/deploy-pages@v5
