@@ -17,6 +17,8 @@ interface HomeTrader {
   image: string;
   /** 下次补货时间戳（ms），到期后重新拉取 */
   resetAt: number;
+  /** resetAt 为按补货周期估算的值（源站数据过期时的补偿） */
+  estimated: boolean;
 }
 
 const config = useConfigStore();
@@ -67,15 +69,51 @@ const TRADER_ORDER = [
   "ref",
 ];
 
+/**
+ * 各商人补货周期（ms），从 resetTime 的滚动更新中学习得到并持久化。
+ * 源站文件生成有延迟（实测约 20-30 分钟），resetTime 过期但尚未更新时按周期向后推算。
+ */
+const INTERVALS_KEY = "tarkov-tool-trader-intervals";
+const restockIntervals = new Map<string, number>(
+  JSON.parse(localStorage.getItem(INTERVALS_KEY) ?? "[]") as [string, number][],
+);
+
+function learnIntervals(fresh: Record<string, Trader>) {
+  let changed = false;
+  for (const t of Object.values(fresh)) {
+    if (!t.id || !t.resetTime) continue;
+    const prev = rawTraders.value[t.id]?.resetTime;
+    if (!prev || prev === t.resetTime) continue;
+    const iv = Date.parse(t.resetTime) - Date.parse(prev);
+    // 只接受合理周期（1 分钟 ~ 12 小时），防止源站数据跳变污染
+    if (iv > 60_000 && iv < 12 * 3600_000) {
+      restockIntervals.set(t.id, iv);
+      changed = true;
+    }
+  }
+  if (changed) {
+    localStorage.setItem(INTERVALS_KEY, JSON.stringify([...restockIntervals]));
+  }
+}
+
 function rebuild() {
   const byName = new Map<string, HomeTrader>();
   for (const t of Object.values(rawTraders.value)) {
     if (!t.id || !t.resetTime || !t.normalizedName) continue;
+    let resetAt = Date.parse(t.resetTime);
+    let estimated = false;
+    const iv = restockIntervals.get(t.id);
+    if (iv && resetAt <= Date.now()) {
+      // 源站数据已过期：按已知补货周期向后推算到未来
+      resetAt += Math.ceil((Date.now() - resetAt) / iv) * iv;
+      estimated = true;
+    }
     byName.set(t.normalizedName, {
       id: t.id,
       name: translate(t.name ?? t.id, traderTr.value),
       image: t.imageLink ?? "",
-      resetAt: Date.parse(t.resetTime),
+      resetAt,
+      estimated,
     });
   }
   traders.value = TRADER_ORDER.flatMap((key) => {
@@ -85,10 +123,15 @@ function rebuild() {
 }
 
 async function loadTraders() {
-  // no-cache：源站无 Cache-Control，浏览器启发式缓存会返回过期的补货时间，必须强制回源校验
-  rawTraders.value = (
-    await fetchJson<JsonData<Record<string, Trader>>>(`/${config.mode}/traders`, { cache: "no-cache" })
+  // 随机参数绕开 Cloudflare 边缘缓存（部分文件有 8 天 CDN 缓存，no-cache 的 304 拿到的仍是陈旧内容）
+  const fresh = (
+    await fetchJson<JsonData<Record<string, Trader>>>(
+      `/${config.mode}/traders?_=${Date.now()}`,
+      { cache: "no-cache" },
+    )
   ).data;
+  learnIntervals(fresh);
+  rawTraders.value = fresh;
   rebuild();
 }
 
@@ -245,9 +288,9 @@ onBeforeUnmount(() => window.clearInterval(timer));
           <div v-for="t in traders" :key="t.id" class="trader-card">
             <div class="trader-name">{{ t.name }}</div>
             <img class="trader-avatar" :src="t.image" :alt="t.name" loading="lazy" />
-            <div class="trader-countdown">
+            <div class="trader-countdown" :title="t.estimated ? '源站数据延迟，按补货周期估算' : undefined">
               <NSpin v-if="remainMs(t.resetAt) === 0" :size="14" />
-              <template v-else>{{ fmtCountdown(remainMs(t.resetAt)) }}</template>
+              <template v-else>{{ t.estimated ? "≈ " : "" }}{{ fmtCountdown(remainMs(t.resetAt)) }}</template>
             </div>
           </div>
         </div>
