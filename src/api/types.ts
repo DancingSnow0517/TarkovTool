@@ -47,7 +47,11 @@ export interface PricePoint {
 }
 
 export interface Trader {
+  id?: string;
   name?: string;
+  normalizedName?: string;
+  /** 下次补货时间（ISO 时间戳，会随补货滚动更新，不可久缓存） */
+  resetTime?: string;
   imageLink?: string;
 }
 

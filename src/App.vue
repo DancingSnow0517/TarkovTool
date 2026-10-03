@@ -11,6 +11,7 @@ import {
   NMenu,
   NMessageProvider,
   NModal,
+  NNotificationProvider,
   NSelect,
   NSpace,
   zhCN,
@@ -47,7 +48,8 @@ watch(
 );
 
 const menuOptions = computed<MenuOption[]>(() => [
-  { label: () => h(RouterLink, { to: "/" }, () => "套利表"), key: "arbitrage" },
+  { label: () => h(RouterLink, { to: "/" }, () => "首页"), key: "home" },
+  { label: () => h(RouterLink, { to: "/deals" }, () => "套利表"), key: "arbitrage" },
   { label: () => h(RouterLink, { to: "/items" }, () => "物品列表"), key: "items" },
   { label: () => h(RouterLink, { to: "/tasks" }, () => "任务列表"), key: "tasks" },
   {
@@ -75,31 +77,33 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
 <template>
   <NConfigProvider :theme="darkTheme" :locale="zhCN" :date-locale="dateZhCN">
     <NMessageProvider>
-      <div class="app-shell">
-        <header class="app-header">
-          <NSpace align="center" justify="space-between">
-            <NMenu :value="menuValue" mode="horizontal" :options="menuOptions" />
-            <NButton quaternary circle title="设置" @click="settings = true">
-              <template #icon>
-                <NIcon :size="20"><SettingsOutlined /></NIcon>
-              </template>
-            </NButton>
-          </NSpace>
-        </header>
-        <main class="app-main">
-          <RouterView />
-        </main>
-      </div>
-      <NModal v-model:show="settings" preset="card" title="设置" style="width: min(420px, 92vw)">
-        <div class="settings-row">
-          <span>游戏模式</span>
-          <NSelect v-model:value="config.mode" :options="modeOptions" style="width: 230px" />
+      <NNotificationProvider>
+        <div class="app-shell">
+          <header class="app-header">
+            <NSpace align="center" justify="space-between">
+              <NMenu :value="menuValue" mode="horizontal" :options="menuOptions" />
+              <NButton quaternary circle title="设置" @click="settings = true">
+                <template #icon>
+                  <NIcon :size="20"><SettingsOutlined /></NIcon>
+                </template>
+              </NButton>
+            </NSpace>
+          </header>
+          <main class="app-main">
+            <RouterView />
+          </main>
         </div>
-        <div class="settings-row">
-          <span>语言</span>
-          <NSelect v-model:value="config.lang" :options="langOptions" style="width: 230px" />
-        </div>
-      </NModal>
+        <NModal v-model:show="settings" preset="card" title="设置" style="width: min(420px, 92vw)">
+          <div class="settings-row">
+            <span>游戏模式</span>
+            <NSelect v-model:value="config.mode" :options="modeOptions" style="width: 230px" />
+          </div>
+          <div class="settings-row">
+            <span>语言</span>
+            <NSelect v-model:value="config.lang" :options="langOptions" style="width: 230px" />
+          </div>
+        </NModal>
+      </NNotificationProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>
