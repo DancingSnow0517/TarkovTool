@@ -85,8 +85,9 @@ function rebuild() {
 }
 
 async function loadTraders() {
+  // no-cache：源站无 Cache-Control，浏览器启发式缓存会返回过期的补货时间，必须强制回源校验
   rawTraders.value = (
-    await fetchJson<JsonData<Record<string, Trader>>>(`/${config.mode}/traders`)
+    await fetchJson<JsonData<Record<string, Trader>>>(`/${config.mode}/traders`, { cache: "no-cache" })
   ).data;
   rebuild();
 }
@@ -100,15 +101,27 @@ async function loadNames() {
 
 let refreshing = false;
 let lastRefreshAt = 0;
-/** 有倒计时到期后重拉补货时间（源站滚动更新，永远只显示距下次补货的时长）；15 秒节流，避免源站未更新时打满请求 */
+/**
+ * 补货数据补偿机制：初始化失败 / 列表为空 / 有倒计时到期 都会触发重拉（15 秒节流）。
+ * 拉取失败只记日志并等下一轮重试，界面保持加载态。
+ */
 async function refreshIfExpired() {
-  if (refreshing || loading.value) return;
-  if (!traders.value.some((t) => t.resetAt <= now.value)) return;
+  if (refreshing) return;
+  const need =
+    loading.value || !traders.value.length || traders.value.some((t) => t.resetAt <= now.value);
+  if (!need) return;
   if (now.value - lastRefreshAt < 15_000) return;
   refreshing = true;
   lastRefreshAt = now.value;
   try {
-    await loadTraders();
+    if (loading.value) {
+      await Promise.all([loadTraders(), loadNames()]);
+      loading.value = false;
+    } else {
+      await loadTraders();
+    }
+  } catch (e) {
+    console.error("拉取商人补货时间失败，15 秒后重试", e);
   } finally {
     refreshing = false;
   }
@@ -128,7 +141,18 @@ function toggleNotify() {
   }
   // 不等待授权结果（用户可能不处理系统弹窗），页内通知立即可用；系统通知在授权后自动生效
   if ("Notification" in window && Notification.permission === "default") {
-    void Notification.requestPermission().catch(() => "denied" as const);
+    void Notification.requestPermission()
+      .then((perm) => {
+        // Edge/Chrome 的安静通知策略会把授权弹窗降级为地址栏铃铛，dismiss 后结果仍是 default，此时页内提示用户手动允许
+        if (perm === "default") {
+          notification.info({
+            title: "系统通知未授权",
+            content: "浏览器已静默拦截授权请求，可点击地址栏右侧的铃铛图标选择「允许接收通知」；页内通知不受影响。",
+            duration: 10000,
+          });
+        }
+      })
+      .catch(() => "denied" as const);
   }
   // 已过期（等待重拉）的倒计时直接标记为已通知，避免开启瞬间补发旧通知
   for (const t of traders.value) {
@@ -166,16 +190,25 @@ const timer = window.setInterval(() => {
   void refreshIfExpired();
 }, 100);
 
-onMounted(async () => {
-  try {
-    await Promise.all([loadTraders(), loadNames()]);
-  } finally {
-    loading.value = false;
-  }
+onMounted(() => {
+  void refreshIfExpired();
 });
 
-watch(() => config.mode, loadTraders);
-watch(() => [config.mode, config.lang], loadNames);
+watch(
+  () => config.mode,
+  () => {
+    loading.value = true;
+    traders.value = [];
+    lastRefreshAt = 0;
+    void refreshIfExpired();
+  },
+);
+watch(
+  () => config.lang,
+  () => {
+    void loadNames().catch((e) => console.error("拉取商人译名失败", e));
+  },
+);
 
 onBeforeUnmount(() => window.clearInterval(timer));
 </script>
@@ -212,7 +245,10 @@ onBeforeUnmount(() => window.clearInterval(timer));
           <div v-for="t in traders" :key="t.id" class="trader-card">
             <div class="trader-name">{{ t.name }}</div>
             <img class="trader-avatar" :src="t.image" :alt="t.name" loading="lazy" />
-            <div class="trader-countdown">{{ fmtCountdown(remainMs(t.resetAt)) }}</div>
+            <div class="trader-countdown">
+              <NSpin v-if="remainMs(t.resetAt) === 0" :size="14" />
+              <template v-else>{{ fmtCountdown(remainMs(t.resetAt)) }}</template>
+            </div>
           </div>
         </div>
       </div>

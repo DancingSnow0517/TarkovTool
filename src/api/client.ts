@@ -4,8 +4,8 @@ export const BASE_URL = "https://json.tarkov.dev";
 
 const STATIC_TTL = 7 * 24 * 3600 * 1000;
 
-export async function fetchJson<T = unknown>(path: string): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`);
+export async function fetchJson<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(`${BASE_URL}${path}`, init);
   if (!resp.ok) throw new Error(`${path} → HTTP ${resp.status}`);
   return (await resp.json()) as T;
 }
