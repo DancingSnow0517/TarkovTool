@@ -1,0 +1,14 @@
+{
+  "name": "Tarkov 工具箱",
+  "short_name": "Tarkov 工具箱",
+  "description": "逃离塔科夫工具：游戏内时间、商人补货、套利表、物品/任务列表与互动地图",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101014",
+  "theme_color": "#101014",
+  "icons": [
+    { "src": "icons/pwa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
