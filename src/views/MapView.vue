@@ -8,12 +8,14 @@ import { useRoute, useRouter } from "vue-router";
 import type { LocationQuery, LocationQueryValue } from "vue-router";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { fetchCached } from "@/api/client";
+import { fetchCached, fetchCachedTrimmed } from "@/api/client";
 import { useConfigStore } from "@/stores/config";
 import type {
+  ApiMapMarkers,
   MapData,
   MapExtent,
   MapLayer,
+  MapsApiResponse,
   TaskLocation,
   TaskPosition,
   TranslationMap,
@@ -26,6 +28,7 @@ const config = useConfigStore();
 const mapEl = ref<HTMLDivElement>();
 const floorPanelEl = ref<HTMLDivElement>();
 const objPanelEl = ref<HTMLDivElement>();
+const markerPanelEl = ref<HTMLDivElement>();
 const styleSelectEl = ref<HTMLSelectElement>();
 const status = ref("加载中 ...");
 const zoomInfo = ref("");
@@ -89,6 +92,57 @@ type FocusLayer = L.Path & {
 
 type FloorMatch = { type: "full" | "partial"; bounded: boolean } | false;
 
+/** 一个标记类别（面板子项），color 用于区域描边，icon 用于中心点图标 */
+interface MarkerCatDef {
+  key: string;
+  label: string;
+  color: string;
+  icon: string;
+}
+
+/** 标记分组（面板一级行，三态勾选联动子项） */
+interface MarkerGroupDef {
+  key: string;
+  label: string;
+  children: MarkerCatDef[];
+}
+
+/** 地图上已绘制的一个标记：中心图标 + 常驻名称（仅撤离点组）+ 悬浮才显示的区域轮廓 */
+interface MarkerRec {
+  dot: L.Marker;
+  outline?: L.Polygon;
+  cat: string;
+  vis: LabelVis;
+  /** 所属楼层（按中心高度判定），点击跨层标记时切到该层 */
+  floor: MapLayer | null;
+  hovered: boolean;
+}
+
+/* 分组与类别定义：key 与 config store 持久化的勾选状态对应；
+ * 图标在 public/assets/interactive/ 下，配色与图标一致 */
+const MARKER_GROUPS: MarkerGroupDef[] = [
+  {
+    key: "extracts",
+    label: "撤离点",
+    children: [
+      { key: "pmc-extract", label: "PMC撤离点", color: "#37b24d", icon: "extract_pmc.webp" },
+      { key: "scav-extract", label: "Scav撤离点", color: "#f08c00", icon: "extract_scav.webp" },
+      { key: "coop-extract", label: "共享撤离点", color: "#22b8cf", icon: "extract_shared.webp" },
+      { key: "transit", label: "转移", color: "#e8590c", icon: "extract_transit.webp" },
+    ],
+  },
+  {
+    key: "hazards",
+    label: "危险区",
+    children: [
+      { key: "minefield", label: "地雷", color: "#fab005", icon: "hazard.webp" },
+      { key: "sniper", label: "狙击手", color: "#e64980", icon: "hazard.webp" },
+    ],
+  },
+];
+
+const MARKER_CATS = new Map(MARKER_GROUPS.flatMap((g) => g.children.map((c) => [c.key, c])));
+
 interface XZ {
   x: number;
   z: number;
@@ -105,6 +159,8 @@ let floorOverlay: L.TileLayer | null = null; // 当前楼层的瓦片叠加层
 let activeFloor: MapLayer | null = null; // 当前楼层（null = 主层）
 let focusLayers: FocusLayer[] = []; // 聚焦绘制物，_floor 记录所属楼层
 let labelMarkers: LabelMarker[] = []; // 区域标签，_vis 记录楼层可见性
+let markerRecs: MarkerRec[] = []; // 撤离点/危险区标记
+let markerCounts: Record<string, number> = {}; // 各类别标记数量（面板只列出当前地图存在的类别）
 let raidTimer: ReturnType<typeof setInterval> | null = null;
 
 const setStatus = (msg: string) => {
@@ -310,6 +366,8 @@ function setFloor(layer: MapLayer | null) {
     const onFloor = (l._floor || null) === layer;
     l.setStyle(onFloor ? l._normal : l._dim);
   }
+  // 标记（撤离点/危险区）按楼层 + 勾选状态显隐
+  updateMarkers();
   // 面板选中态
   const panel = floorPanelEl.value;
   if (panel) {
@@ -366,6 +424,186 @@ function addLabels(md: MapData) {
     marker._vis = labelVisibility(top, bottom, position);
     labelMarkers.push(marker);
   }
+}
+
+/* ---- 地图标记（撤离点/危险区） ---- */
+
+function catEnabled(key: string): boolean {
+  return config.mapMarkers === null || config.mapMarkers.has(key);
+}
+
+function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap) {
+  const add = (
+    catKey: string,
+    name: string,
+    position: TaskPosition,
+    outline?: TaskPosition[],
+    top?: number,
+    bottom?: number,
+  ) => {
+    const cat = MARKER_CATS.get(catKey)!;
+    const rec: MarkerRec = {
+      dot: L.marker(pos(position), {
+        icon: L.icon({
+          iconUrl: import.meta.env.BASE_URL + "assets/interactive/" + cat.icon,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+        }),
+      }).addTo(map!),
+      cat: catKey,
+      vis: labelVisibility(top ?? 1000, bottom ?? -1000, position),
+      floor: layerForZone(position),
+      hovered: false,
+    };
+    // 点击跨层（半透明）标记时切到它所在的楼层
+    rec.dot.on("click", () => {
+      if (rec.floor !== activeFloor) setFloor(rec.floor);
+    });
+    // closeOnClick:false：点击会冒泡到地图，默认行为会把刚打开的气泡又关掉；
+    // 改由地图点击处理器统一判定（点在标记外才关）
+    rec.dot.bindPopup(`<b>${name}</b><br><i>${cat.label}</i>`, { closeOnClick: false });
+    // 撤离点组：图标下方常驻名称文本
+    if (catKey !== "minefield" && catKey !== "sniper") {
+      rec.dot.bindTooltip(name, {
+        permanent: true,
+        direction: "bottom",
+        offset: [0, 14],
+        className: "mk-name",
+        interactive: false,
+      });
+    }
+    // 区域轮廓默认隐藏，悬浮图标时显示
+    if (outline && outline.length >= 3) {
+      rec.outline = L.polygon(outline.map(pos), {
+        color: cat.color,
+        weight: 2,
+        fillColor: cat.color,
+        fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(map!);
+      rec.dot.on("mouseover", () => {
+        rec.hovered = true;
+        refreshOutline(rec);
+      });
+      rec.dot.on("mouseout", () => {
+        rec.hovered = false;
+        refreshOutline(rec);
+      });
+    }
+    markerRecs.push(rec);
+    markerCounts[catKey] = (markerCounts[catKey] ?? 0) + 1;
+  };
+  for (const e of api.extracts) {
+    // 无阵营字段的地图（工厂/中心区21+）只有 PMC 一种撤离点；
+    // shared 是 PMC/Scav 都能用的共享撤离点（真正的合作撤离点译文里自含"合作"字样）
+    const catKey =
+      e.faction === "scav" ? "scav-extract" : e.faction === "shared" ? "coop-extract" : "pmc-extract";
+    add(catKey, tr[e.name] || e.name, e.position, e.outline, e.top, e.bottom);
+  }
+  for (const t of api.transits) {
+    add("transit", tr[t.description] || t.description, t.position, t.outline, t.top, t.bottom);
+  }
+  for (const h of api.hazards) {
+    // 通用 hazard（迷宫陷阱）不在面板类别内，不展示
+    if (h.hazardType !== "minefield" && h.hazardType !== "sniper") continue;
+    add(h.hazardType, tr[h.name] || h.name, h.position, h.outline, h.top, h.bottom);
+  }
+}
+
+/** 轮廓只在悬浮且类别启用时显示 */
+function refreshOutline(rec: MarkerRec) {
+  const el = rec.outline?.getElement() as SVGElement | undefined;
+  if (el) el.style.display = rec.hovered && catEnabled(rec.cat) ? "" : "none";
+}
+
+/** 图标/常驻文本/轮廓三件套的整体透明度（跨层标记半透明） */
+function setRecOpacity(rec: MarkerRec, opacity: string) {
+  const dotEl = rec.dot.getElement();
+  if (dotEl) dotEl.style.opacity = opacity;
+  const tipEl = rec.dot.getTooltip()?.getElement();
+  if (tipEl) tipEl.style.opacity = opacity;
+  const outEl = rec.outline?.getElement() as SVGElement | undefined;
+  if (outEl) outEl.style.opacity = opacity;
+}
+
+/** 类别未勾选 → 隐藏；勾选但不在当前楼层 → 半透明；否则正常显示 */
+function updateMarkers() {
+  for (const rec of markerRecs) {
+    const enabled = catEnabled(rec.cat);
+    const dim = enabled && !labelVisible(rec.vis, activeFloor);
+    if (!enabled) rec.dot.closePopup();
+    const dotEl = rec.dot.getElement();
+    if (dotEl) dotEl.style.display = enabled ? "" : "none";
+    const tipEl = rec.dot.getTooltip()?.getElement();
+    if (tipEl) tipEl.style.display = enabled ? "" : "none";
+    setRecOpacity(rec, dim ? "0.3" : "");
+    refreshOutline(rec);
+  }
+}
+
+/** 点击位置是否命中图标标记（图标 26px，给一点余量） */
+function markerHit(dot: L.Marker, latlng: L.LatLng): boolean {
+  const d = map!.latLngToLayerPoint(dot.getLatLng()).distanceTo(map!.latLngToLayerPoint(latlng));
+  return d <= 16;
+}
+
+/** 勾选变更：合并当前状态写回 store（持久化），重建面板并刷新显隐 */
+function commitMarkers(changes: (readonly [string, boolean])[]) {
+  const enabled = MARKER_GROUPS.flatMap((g) => g.children)
+    .filter((c) => {
+      const change = changes.find(([k]) => k === c.key);
+      return change ? change[1] : catEnabled(c.key);
+    })
+    .map((c) => c.key);
+  config.setMapMarkers(enabled);
+  buildMarkerPanel();
+  updateMarkers();
+}
+
+/** 分组勾选面板：组行三态（全选/部分/全不选），子项缩进；只列出当前地图存在的类别 */
+function buildMarkerPanel() {
+  const panel = markerPanelEl.value!;
+  panel.innerHTML = "";
+  let any = false;
+  const title = document.createElement("div");
+  title.className = "mk-title";
+  title.textContent = "标记";
+  panel.appendChild(title);
+  for (const group of MARKER_GROUPS) {
+    const present = group.children.filter((c) => markerCounts[c.key]);
+    if (!present.length) continue;
+    any = true;
+    const enabledCount = present.filter((c) => catEnabled(c.key)).length;
+    const groupRow = document.createElement("label");
+    groupRow.className = "mk-row mk-group-row";
+    const groupBox = document.createElement("input");
+    groupBox.type = "checkbox";
+    groupBox.checked = enabledCount === present.length;
+    groupBox.indeterminate = enabledCount > 0 && enabledCount < present.length;
+    // 全选态点击 → 全不选；未全选/部分选 → 全选
+    groupBox.onchange = () =>
+      commitMarkers(present.map((c) => [c.key, enabledCount < present.length] as const));
+    groupRow.appendChild(groupBox);
+    groupRow.appendChild(document.createTextNode(group.label));
+    panel.appendChild(groupRow);
+    for (const cat of present) {
+      const row = document.createElement("label");
+      row.className = "mk-row mk-child-row";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = catEnabled(cat.key);
+      box.onchange = () => commitMarkers([[cat.key, box.checked]]);
+      const swatch = document.createElement("img");
+      swatch.className = "mk-swatch";
+      swatch.src = import.meta.env.BASE_URL + "assets/interactive/" + cat.icon;
+      swatch.alt = "";
+      row.appendChild(box);
+      row.appendChild(swatch);
+      row.appendChild(document.createTextNode(cat.label));
+      panel.appendChild(row);
+    }
+  }
+  panel.hidden = !any;
 }
 
 /* ---- 任务目标定位 ---- */
@@ -579,6 +817,8 @@ function cleanup() {
   activeFloor = null;
   focusLayers = [];
   labelMarkers = [];
+  markerRecs = [];
+  markerCounts = {};
   if (floorPanelEl.value) {
     floorPanelEl.value.innerHTML = "";
     floorPanelEl.value.hidden = true;
@@ -586,6 +826,10 @@ function cleanup() {
   if (objPanelEl.value) {
     objPanelEl.value.innerHTML = "";
     objPanelEl.value.hidden = true;
+  }
+  if (markerPanelEl.value) {
+    markerPanelEl.value.innerHTML = "";
+    markerPanelEl.value.hidden = true;
   }
 }
 
@@ -670,10 +914,35 @@ async function init() {
     if (e.latlng && focusLayers.some((l) => l.getPopup() && layerContainsPoint(l, e.latlng)))
       return;
     for (const l of focusLayers) l.closePopup();
+    // 标记气泡同理：点在图标上保留，点到空白处全部关闭
+    if (!(e.latlng && markerRecs.some((r) => r.dot.getPopup() && markerHit(r.dot, e.latlng))))
+      for (const r of markerRecs) r.dot.closePopup();
     objPanelEl.value
       ?.querySelectorAll(".obj-item.active")
       .forEach((el) => el.classList.remove("active"));
   });
+
+  // 撤离点/危险区标记。全量 /maps 响应体积大（~8MB），裁剪出标记字段后再缓存（~140KB）
+  setStatus("加载地图标记 ...");
+  const apiMarkers = await fetchCachedTrimmed<MapsApiResponse, Record<string, ApiMapMarkers>>(
+    `/${gameMode}/maps`,
+    (raw) => {
+      const out: Record<string, ApiMapMarkers> = {};
+      for (const [id, m] of Object.entries(raw.data.maps)) {
+        out[id] = {
+          extracts: m.extracts ?? [],
+          transits: m.transits ?? [],
+          hazards: m.hazards ?? [],
+        };
+      }
+      return out;
+    },
+  );
+  const mapTr = (await fetchCached<TrResponse>(`/${gameMode}/maps_${lang}`)).data;
+  const apiId = mapData.apiIds.find((id) => apiMarkers[id]);
+  if (apiId) drawMapMarkers(apiMarkers[apiId], mapTr);
+  buildMarkerPanel();
+  updateMarkers();
 
   if (!qIds.length) {
     setStatus("");
@@ -762,6 +1031,7 @@ onBeforeUnmount(() => {
     </div>
     <div ref="floorPanelEl" class="map-floor-panel" hidden></div>
     <div ref="objPanelEl" class="map-obj-panel" hidden></div>
+    <div ref="markerPanelEl" class="map-marker-panel" hidden></div>
     <div ref="mapEl" class="map-leaflet"></div>
   </div>
 </template>
@@ -884,6 +1154,79 @@ onBeforeUnmount(() => {
   border: none;
   border-top: 1px solid #3a3b40;
   margin: 4px 0;
+}
+
+/* 标记分组面板：右上角；组行三态勾选，子项缩进 */
+.map-page .map-marker-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  background: rgba(20, 21, 24, 0.85);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #d8d8d8;
+  font: 13px/1.4 sans-serif;
+  min-width: 140px;
+}
+
+.map-page .map-marker-panel[hidden] {
+  display: none;
+}
+
+.map-page .mk-title {
+  font-weight: 700;
+  padding: 2px 4px 6px;
+}
+
+.map-page .mk-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-page .mk-row:hover {
+  background: #2e2f35;
+}
+
+.map-page .mk-group-row {
+  font-weight: 600;
+}
+
+.map-page .mk-child-row {
+  padding-left: 22px;
+}
+
+.map-page .mk-row input[type="checkbox"] {
+  accent-color: #ffd54a;
+  margin: 0;
+}
+
+.map-page .mk-swatch {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* 撤离点图标下方的常驻名称（Leaflet permanent tooltip） */
+.map-page .mk-name.leaflet-tooltip {
+  background: rgba(20, 21, 24, 0.78);
+  border: 1px solid #3a3b40;
+  border-radius: 4px;
+  box-shadow: none;
+  color: #e8e8e8;
+  font: 11px/1.3 sans-serif;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.map-page .mk-name.leaflet-tooltip-bottom::before {
+  border-bottom-color: #3a3b40;
 }
 
 .map-page .floor-item {

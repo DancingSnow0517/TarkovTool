@@ -130,6 +130,58 @@ export interface GameMap {
 
 export type TranslationMap = Record<string, string>;
 
+/** /{mode}/maps 中地图页标记相关字段（撤离点/转移/危险区） */
+export interface ApiMapExtract {
+  name: string;
+  /** pmc / scav / shared（合作撤离点）；部分地图无阵营划分（按 PMC 处理） */
+  faction?: string;
+  position: TaskPosition;
+  outline?: TaskPosition[];
+  top?: number;
+  bottom?: number;
+}
+
+export interface ApiMapTransit {
+  /** 翻译键（如 FAC_TRANSIT_12_DESC），在 /{mode}/maps_{lang} 中查译文 */
+  description: string;
+  position: TaskPosition;
+  outline?: TaskPosition[];
+  top?: number;
+  bottom?: number;
+}
+
+export interface ApiMapHazard {
+  /** minefield / sniper / hazard（通用，不展示） */
+  hazardType: string;
+  /** 翻译键（如 DamageType_Landmine） */
+  name: string;
+  position: TaskPosition;
+  outline?: TaskPosition[];
+  top?: number;
+  bottom?: number;
+}
+
+/** 裁剪后缓存的地图标记数据（key 为 API 地图 id） */
+export interface ApiMapMarkers {
+  extracts: ApiMapExtract[];
+  transits: ApiMapTransit[];
+  hazards: ApiMapHazard[];
+}
+
+/** /{mode}/maps 原始响应（只声明标记相关字段，其余字段裁剪时丢弃） */
+export interface MapsApiResponse {
+  data: {
+    maps: Record<
+      string,
+      {
+        extracts?: ApiMapExtract[];
+        transits?: ApiMapTransit[];
+        hazards?: ApiMapHazard[];
+      }
+    >;
+  };
+}
+
 /** maps.json 中的地图定义（地图页使用） */
 export interface MapLabel {
   position: [number, number];

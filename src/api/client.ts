@@ -27,3 +27,28 @@ export async function fetchCached<T = unknown>(path: string, ttl = STATIC_TTL): 
   }
   return data;
 }
+
+/**
+ * 拉取后先裁剪再缓存（用于 /maps 等大体积接口，只存需要的字段，避免超出 localStorage 配额）。
+ * 缓存键与 fetchCached 不同（cache-trim: 前缀），两者互不影响。
+ */
+export async function fetchCachedTrimmed<R, T>(
+  path: string,
+  trim: (raw: R) => T,
+  ttl = STATIC_TTL,
+): Promise<T> {
+  const key = `cache-trim:${path}`;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key) ?? "null") as { t: number; d: T } | null;
+    if (hit && Date.now() - hit.t < ttl) return hit.d;
+  } catch {
+    // 缓存损坏则重新下载
+  }
+  const data = trim(await fetchJson<R>(path));
+  try {
+    localStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data }));
+  } catch {
+    // 存储满则放弃缓存
+  }
+  return data;
+}
