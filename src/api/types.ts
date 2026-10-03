@@ -161,11 +161,39 @@ export interface ApiMapHazard {
   bottom?: number;
 }
 
+export interface ApiMapLock {
+  /** door / trunk（车门后备箱） */
+  lockType: string;
+  /** 钥匙物品 id，名称在 /{mode}/items_{lang} 的 "<id> Name" 键里 */
+  key: string;
+  needsPower?: boolean;
+  position: TaskPosition;
+}
+
+export interface ApiMapStationaryWeapon {
+  /** 武器物品 id（AGS-30/NSV，不在 items 数据里，名称用固定映射） */
+  stationaryWeapon: string;
+  position: TaskPosition;
+}
+
+export interface ApiMapSwitch {
+  /** 翻译键（如 switch_00409_power），maps_{lang} 里部分有译文 */
+  name: string;
+  switchType?: string;
+  position: TaskPosition;
+  outline?: TaskPosition[];
+  top?: number;
+  bottom?: number;
+}
+
 /** 裁剪后缓存的地图标记数据（key 为 API 地图 id） */
 export interface ApiMapMarkers {
   extracts: ApiMapExtract[];
   transits: ApiMapTransit[];
   hazards: ApiMapHazard[];
+  locks: ApiMapLock[];
+  stationaryWeapons: ApiMapStationaryWeapon[];
+  switches: ApiMapSwitch[];
 }
 
 /** /{mode}/maps 原始响应（只声明标记相关字段，其余字段裁剪时丢弃） */
@@ -177,6 +205,9 @@ export interface MapsApiResponse {
         extracts?: ApiMapExtract[];
         transits?: ApiMapTransit[];
         hazards?: ApiMapHazard[];
+        locks?: ApiMapLock[];
+        stationaryWeapons?: ApiMapStationaryWeapon[];
+        switches?: ApiMapSwitch[];
       }
     >;
   };

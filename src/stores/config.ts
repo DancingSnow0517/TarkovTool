@@ -23,6 +23,9 @@ export const MAP_MARKER_KEYS = [
   "transit",
   "minefield",
   "sniper",
+  "locked-door",
+  "stationary-weapon",
+  "switch",
 ] as const;
 
 interface Persisted {
@@ -30,7 +33,8 @@ interface Persisted {
   lang?: string;
   favorites?: string[];
   columns?: string[];
-  mapMarkers?: string[];
+  /** 被取消勾选的标记类别（缺省/空 = 全部启用；新增类别对老用户默认启用） */
+  mapMarkersOff?: string[];
 }
 
 function loadPersisted(): Persisted {
@@ -49,8 +53,8 @@ export const useConfigStore = defineStore("config", {
       mode: (GAME_MODES.some((m) => m.value === p.mode) ? p.mode : "regular") as GameMode,
       lang: p.lang && (LANGUAGES as readonly string[]).includes(p.lang) ? p.lang : "zh",
       favorites: new Set<string>(p.favorites ?? []),
-      /** null 表示全部启用（默认）；用户取消过任意一项后持久化为启用的子集 */
-      mapMarkers: (p.mapMarkers ? new Set<string>(p.mapMarkers) : null) as Set<string> | null,
+      /** 被取消勾选的地图标记类别；null 表示全部启用（默认） */
+      mapMarkersOff: (p.mapMarkersOff?.length ? new Set<string>(p.mapMarkersOff) : null) as Set<string> | null,
       /** null 表示使用默认列 */
       columns: null as string[] | null,
       ...(p.columns?.length ? { columns: p.columns } : {}),
@@ -61,9 +65,10 @@ export const useConfigStore = defineStore("config", {
       if (this.favorites.has(id)) this.favorites.delete(id);
       else this.favorites.add(id);
     },
-    /** 更新地图标记勾选；全部启用时归一为 null（默认态，不写入持久化） */
+    /** 更新地图标记勾选（传入启用的类别）；全部启用时归一为 null（默认态，不写入持久化） */
     setMapMarkers(enabled: string[]) {
-      this.mapMarkers = enabled.length >= MAP_MARKER_KEYS.length ? null : new Set(enabled);
+      const off = MAP_MARKER_KEYS.filter((k) => !enabled.includes(k));
+      this.mapMarkersOff = off.length ? new Set(off) : null;
       this.persist();
     },
     persist() {
@@ -73,7 +78,7 @@ export const useConfigStore = defineStore("config", {
         favorites: [...this.favorites],
       };
       if (this.columns) data.columns = this.columns;
-      if (this.mapMarkers) data.mapMarkers = [...this.mapMarkers];
+      if (this.mapMarkersOff) data.mapMarkersOff = [...this.mapMarkersOff];
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
   },

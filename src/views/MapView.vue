@@ -139,9 +139,27 @@ const MARKER_GROUPS: MarkerGroupDef[] = [
       { key: "sniper", label: "狙击手", color: "#e64980", icon: "hazard.webp" },
     ],
   },
+  {
+    key: "interactive",
+    label: "可交互",
+    children: [
+      { key: "locked-door", label: "上锁的门", color: "#d0bfff", icon: "lock.png" },
+      { key: "stationary-weapon", label: "固定机炮", color: "#ff8787", icon: "stationarygun.webp" },
+      { key: "switch", label: "开关", color: "#63e6be", icon: "switch.png" },
+    ],
+  },
 ];
 
 const MARKER_CATS = new Map(MARKER_GROUPS.flatMap((g) => g.children.map((c) => [c.key, c])));
+
+/* 只有撤离点组在图标下方常驻名称文本 */
+const EXTRACT_CATS = new Set(MARKER_GROUPS[0].children.map((c) => c.key));
+
+/* 固定机炮的 id 不在 items 数据里，名称用固定映射（AGS-30 / NSV） */
+const STATIONARY_NAMES: Record<string, string> = {
+  "5cdeb229d7f00c000e7ce174": "AGS-30 自动榴弹发射器",
+  "5d52cc5ba4b9367408500062": "NSV 重机枪",
+};
 
 interface XZ {
   x: number;
@@ -429,13 +447,14 @@ function addLabels(md: MapData) {
 /* ---- 地图标记（撤离点/危险区） ---- */
 
 function catEnabled(key: string): boolean {
-  return config.mapMarkers === null || config.mapMarkers.has(key);
+  return config.mapMarkersOff === null || !config.mapMarkersOff.has(key);
 }
 
-function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap) {
+function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap, itemTr: TranslationMap) {
   const add = (
     catKey: string,
-    name: string,
+    title: string,
+    sub: string,
     position: TaskPosition,
     outline?: TaskPosition[],
     top?: number,
@@ -461,10 +480,10 @@ function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap) {
     });
     // closeOnClick:false：点击会冒泡到地图，默认行为会把刚打开的气泡又关掉；
     // 改由地图点击处理器统一判定（点在标记外才关）
-    rec.dot.bindPopup(`<b>${name}</b><br><i>${cat.label}</i>`, { closeOnClick: false });
+    rec.dot.bindPopup(`<b>${title}</b>${sub ? `<br>${sub}` : ""}`, { closeOnClick: false });
     // 撤离点组：图标下方常驻名称文本
-    if (catKey !== "minefield" && catKey !== "sniper") {
-      rec.dot.bindTooltip(name, {
+    if (EXTRACT_CATS.has(catKey)) {
+      rec.dot.bindTooltip(title, {
         permanent: true,
         direction: "bottom",
         offset: [0, 14],
@@ -498,15 +517,28 @@ function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap) {
     // shared 是 PMC/Scav 都能用的共享撤离点（真正的合作撤离点译文里自含"合作"字样）
     const catKey =
       e.faction === "scav" ? "scav-extract" : e.faction === "shared" ? "coop-extract" : "pmc-extract";
-    add(catKey, tr[e.name] || e.name, e.position, e.outline, e.top, e.bottom);
+    add(catKey, tr[e.name] || e.name, `<i>${MARKER_CATS.get(catKey)!.label}</i>`, e.position, e.outline, e.top, e.bottom);
   }
   for (const t of api.transits) {
-    add("transit", tr[t.description] || t.description, t.position, t.outline, t.top, t.bottom);
+    add("transit", tr[t.description] || t.description, "<i>转移</i>", t.position, t.outline, t.top, t.bottom);
   }
   for (const h of api.hazards) {
     // 通用 hazard（迷宫陷阱）不在面板类别内，不展示
     if (h.hazardType !== "minefield" && h.hazardType !== "sniper") continue;
-    add(h.hazardType, tr[h.name] || h.name, h.position, h.outline, h.top, h.bottom);
+    add(h.hazardType, tr[h.name] || h.name, "", h.position, h.outline, h.top, h.bottom);
+  }
+  for (const l of api.locks) {
+    const keyName = itemTr[`${l.key} Name`] || l.key;
+    const kind = l.lockType === "trunk" ? "上锁的后备箱" : "上锁的门";
+    // 门只有位置点，按所在高度判定楼层
+    add("locked-door", kind, `钥匙: ${keyName}`, l.position, undefined, l.position.y, l.position.y);
+  }
+  for (const s of api.stationaryWeapons) {
+    const name = STATIONARY_NAMES[s.stationaryWeapon] || s.stationaryWeapon;
+    add("stationary-weapon", name, "<i>固定机炮</i>", s.position, undefined, s.position.y, s.position.y);
+  }
+  for (const s of api.switches) {
+    add("switch", tr[s.name] || s.name, "<i>开关</i>", s.position, s.outline, s.top, s.bottom);
   }
 }
 
@@ -526,12 +558,18 @@ function setRecOpacity(rec: MarkerRec, opacity: string) {
   if (outEl) outEl.style.opacity = opacity;
 }
 
+/** 关闭标记气泡：Leaflet 的 closePopup 只认"当前"气泡（多个气泡同开时其余关不掉），直接按层移除 */
+function closeMarkerPopup(dot: L.Marker) {
+  const popup = dot.getPopup();
+  if (popup && popup.isOpen()) map!.removeLayer(popup);
+}
+
 /** 类别未勾选 → 隐藏；勾选但不在当前楼层 → 半透明；否则正常显示 */
 function updateMarkers() {
   for (const rec of markerRecs) {
     const enabled = catEnabled(rec.cat);
     const dim = enabled && !labelVisible(rec.vis, activeFloor);
-    if (!enabled) rec.dot.closePopup();
+    if (!enabled) closeMarkerPopup(rec.dot);
     const dotEl = rec.dot.getElement();
     if (dotEl) dotEl.style.display = enabled ? "" : "none";
     const tipEl = rec.dot.getTooltip()?.getElement();
@@ -916,7 +954,7 @@ async function init() {
     for (const l of focusLayers) l.closePopup();
     // 标记气泡同理：点在图标上保留，点到空白处全部关闭
     if (!(e.latlng && markerRecs.some((r) => r.dot.getPopup() && markerHit(r.dot, e.latlng))))
-      for (const r of markerRecs) r.dot.closePopup();
+      for (const r of markerRecs) closeMarkerPopup(r.dot);
     objPanelEl.value
       ?.querySelectorAll(".obj-item.active")
       .forEach((el) => el.classList.remove("active"));
@@ -933,14 +971,19 @@ async function init() {
           extracts: m.extracts ?? [],
           transits: m.transits ?? [],
           hazards: m.hazards ?? [],
+          locks: m.locks ?? [],
+          stationaryWeapons: m.stationaryWeapons ?? [],
+          switches: m.switches ?? [],
         };
       }
       return out;
     },
   );
   const mapTr = (await fetchCached<TrResponse>(`/${gameMode}/maps_${lang}`)).data;
+  // 上锁的门需要钥匙物品名（items_{lang} 的 "<id> Name" 键）
+  const itemTr = (await fetchCached<TrResponse>(`/${gameMode}/items_${lang}`)).data;
   const apiId = mapData.apiIds.find((id) => apiMarkers[id]);
-  if (apiId) drawMapMarkers(apiMarkers[apiId], mapTr);
+  if (apiId) drawMapMarkers(apiMarkers[apiId], mapTr, itemTr);
   buildMarkerPanel();
   updateMarkers();
 
