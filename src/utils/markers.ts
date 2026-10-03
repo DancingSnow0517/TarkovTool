@@ -84,7 +84,7 @@ export const MARKER_GROUPS: MarkerGroupDef[] = [
       { key: "buried-barrel-cache", label: "物资埋藏桶", color: "#9d9d9d", icon: "container_buried-barrel-cache.png" },
       { key: "medbag", label: "SMU06 医疗包", color: "#9d9d9d", icon: "container_medbag.png" },
       { key: "pmc-body", label: "PMC尸体", color: "#9d9d9d", icon: "container_dead-scav.webp" },
-      { key: "ground-cache", label: "物资埋藏箱", color: "#9d9d9d", icon: "container_ground-cache.png" },
+      { key: "ground-cache", label: "物资埋藏箱", color: "#9d9d9d", icon: "container_ground-cache.webp" },
       { key: "technical-supply-crate", label: "技术物资箱", color: "#9d9d9d", icon: "container_crate.png" },
       { key: "wooden-ammo-box", label: "木制弹药箱", color: "#9d9d9d", icon: "container_wooden-ammo-box.webp" },
       { key: "medcase", label: "医药箱", color: "#9d9d9d", icon: "container_medcase.png" },
