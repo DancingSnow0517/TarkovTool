@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { MARKER_GROUPS } from "@/utils/markers";
 
 export const GAME_MODES = [
   { label: "PVP (regular)", value: "regular" },
@@ -15,18 +16,8 @@ export const LANGUAGES = [
 
 const STORAGE_KEY = "tarkov-tool-config";
 
-/** 地图标记类别 key（地图页分组面板的子项） */
-export const MAP_MARKER_KEYS = [
-  "pmc-extract",
-  "scav-extract",
-  "coop-extract",
-  "transit",
-  "minefield",
-  "sniper",
-  "locked-door",
-  "stationary-weapon",
-  "switch",
-] as const;
+/** 地图标记类别 key（地图页分组面板的子项，定义在 utils/markers） */
+export const MAP_MARKER_KEYS = MARKER_GROUPS.flatMap((g) => g.children.map((c) => c.key));
 
 interface Persisted {
   mode?: string;

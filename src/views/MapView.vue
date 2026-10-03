@@ -10,12 +10,14 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchCached, fetchCachedTrimmed } from "@/api/client";
 import { useConfigStore } from "@/stores/config";
+import { MARKER_CATS, MARKER_GROUPS } from "@/utils/markers";
 import type {
   ApiMapMarkers,
   MapData,
   MapExtent,
   MapLayer,
   MapsApiResponse,
+  MapsMarkersTrimmed,
   TaskLocation,
   TaskPosition,
   TranslationMap,
@@ -92,21 +94,6 @@ type FocusLayer = L.Path & {
 
 type FloorMatch = { type: "full" | "partial"; bounded: boolean } | false;
 
-/** 一个标记类别（面板子项），color 用于区域描边，icon 用于中心点图标 */
-interface MarkerCatDef {
-  key: string;
-  label: string;
-  color: string;
-  icon: string;
-}
-
-/** 标记分组（面板一级行，三态勾选联动子项） */
-interface MarkerGroupDef {
-  key: string;
-  label: string;
-  children: MarkerCatDef[];
-}
-
 /** 地图上已绘制的一个标记：中心图标 + 常驻名称（仅撤离点组）+ 悬浮才显示的区域轮廓 */
 interface MarkerRec {
   dot: L.Marker;
@@ -117,40 +104,6 @@ interface MarkerRec {
   floor: MapLayer | null;
   hovered: boolean;
 }
-
-/* 分组与类别定义：key 与 config store 持久化的勾选状态对应；
- * 图标在 public/assets/interactive/ 下，配色与图标一致 */
-const MARKER_GROUPS: MarkerGroupDef[] = [
-  {
-    key: "extracts",
-    label: "撤离点",
-    children: [
-      { key: "pmc-extract", label: "PMC撤离点", color: "#37b24d", icon: "extract_pmc.webp" },
-      { key: "scav-extract", label: "Scav撤离点", color: "#f08c00", icon: "extract_scav.webp" },
-      { key: "coop-extract", label: "共享撤离点", color: "#22b8cf", icon: "extract_shared.webp" },
-      { key: "transit", label: "转移", color: "#e8590c", icon: "extract_transit.webp" },
-    ],
-  },
-  {
-    key: "hazards",
-    label: "危险区",
-    children: [
-      { key: "minefield", label: "地雷", color: "#fab005", icon: "hazard.webp" },
-      { key: "sniper", label: "狙击手", color: "#e64980", icon: "hazard.webp" },
-    ],
-  },
-  {
-    key: "interactive",
-    label: "可交互",
-    children: [
-      { key: "locked-door", label: "上锁的门", color: "#d0bfff", icon: "lock.png" },
-      { key: "stationary-weapon", label: "固定机炮", color: "#ff8787", icon: "stationarygun.webp" },
-      { key: "switch", label: "开关", color: "#63e6be", icon: "switch.png" },
-    ],
-  },
-];
-
-const MARKER_CATS = new Map(MARKER_GROUPS.flatMap((g) => g.children.map((c) => [c.key, c])));
 
 /* 只有撤离点组在图标下方常驻名称文本 */
 const EXTRACT_CATS = new Set(MARKER_GROUPS[0].children.map((c) => c.key));
@@ -450,7 +403,12 @@ function catEnabled(key: string): boolean {
   return config.mapMarkersOff === null || !config.mapMarkersOff.has(key);
 }
 
-function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap, itemTr: TranslationMap) {
+function drawMapMarkers(
+  api: ApiMapMarkers,
+  containerDefs: Record<string, string>,
+  tr: TranslationMap,
+  itemTr: TranslationMap,
+) {
   const add = (
     catKey: string,
     title: string,
@@ -539,6 +497,13 @@ function drawMapMarkers(api: ApiMapMarkers, tr: TranslationMap, itemTr: Translat
   }
   for (const s of api.switches) {
     add("switch", tr[s.name] || s.name, "<i>开关</i>", s.position, s.outline, s.top, s.bottom);
+  }
+  for (const c of api.lootContainers) {
+    // 类别按 normalizedName 归并（同译名不同 id 的容器共用勾选项与图标）
+    const norm = containerDefs[c.lootContainer];
+    if (!norm || !MARKER_CATS.has(norm)) continue;
+    const name = tr[`${c.lootContainer} Name`] || norm;
+    add(norm, name, "<i>搜刮容器</i>", c.position, undefined, c.position.y, c.position.y);
   }
 }
 
@@ -962,28 +927,34 @@ async function init() {
 
   // 撤离点/危险区标记。全量 /maps 响应体积大（~8MB），裁剪出标记字段后再缓存（~140KB）
   setStatus("加载地图标记 ...");
-  const apiMarkers = await fetchCachedTrimmed<MapsApiResponse, Record<string, ApiMapMarkers>>(
+  const apiMarkers = await fetchCachedTrimmed<MapsApiResponse, MapsMarkersTrimmed>(
     `/${gameMode}/maps`,
     (raw) => {
-      const out: Record<string, ApiMapMarkers> = {};
+      const out: MapsMarkersTrimmed = { containerDefs: {}, maps: {} };
+      for (const [id, c] of Object.entries(raw.data.lootContainers ?? {})) {
+        if (c.normalizedName) out.containerDefs[id] = c.normalizedName;
+      }
       for (const [id, m] of Object.entries(raw.data.maps)) {
-        out[id] = {
+        out.maps[id] = {
           extracts: m.extracts ?? [],
           transits: m.transits ?? [],
           hazards: m.hazards ?? [],
           locks: m.locks ?? [],
           stationaryWeapons: m.stationaryWeapons ?? [],
           switches: m.switches ?? [],
+          lootContainers: m.lootContainers ?? [],
         };
       }
       return out;
     },
+    7 * 24 * 3600 * 1000,
+    2, // v2：新增容器定义表与 lootContainers
   );
   const mapTr = (await fetchCached<TrResponse>(`/${gameMode}/maps_${lang}`)).data;
   // 上锁的门需要钥匙物品名（items_{lang} 的 "<id> Name" 键）
   const itemTr = (await fetchCached<TrResponse>(`/${gameMode}/items_${lang}`)).data;
-  const apiId = mapData.apiIds.find((id) => apiMarkers[id]);
-  if (apiId) drawMapMarkers(apiMarkers[apiId], mapTr, itemTr);
+  const apiId = mapData.apiIds.find((id) => apiMarkers.maps[id]);
+  if (apiId) drawMapMarkers(apiMarkers.maps[apiId], apiMarkers.containerDefs, mapTr, itemTr);
   buildMarkerPanel();
   updateMarkers();
 
@@ -1205,6 +1176,8 @@ onBeforeUnmount(() => {
   top: 10px;
   right: 10px;
   z-index: 1000;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
   background: rgba(20, 21, 24, 0.85);
   border: 1px solid #3a3b40;
   border-radius: 6px;

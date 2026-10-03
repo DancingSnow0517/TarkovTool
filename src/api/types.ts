@@ -186,6 +186,12 @@ export interface ApiMapSwitch {
   bottom?: number;
 }
 
+export interface ApiMapLootSpot {
+  /** 容器物品 id，normalizedName/译名在 trimmed 响应的 containerDefs 里查 */
+  lootContainer: string;
+  position: TaskPosition;
+}
+
 /** 裁剪后缓存的地图标记数据（key 为 API 地图 id） */
 export interface ApiMapMarkers {
   extracts: ApiMapExtract[];
@@ -194,11 +200,21 @@ export interface ApiMapMarkers {
   locks: ApiMapLock[];
   stationaryWeapons: ApiMapStationaryWeapon[];
   switches: ApiMapSwitch[];
+  lootContainers: ApiMapLootSpot[];
+}
+
+/** /{mode}/maps 裁剪后的缓存格式：容器定义表 + 各图标记数据 */
+export interface MapsMarkersTrimmed {
+  /** 容器 id -> normalizedName（面板子项 key 与图标名依据） */
+  containerDefs: Record<string, string>;
+  maps: Record<string, ApiMapMarkers>;
 }
 
 /** /{mode}/maps 原始响应（只声明标记相关字段，其余字段裁剪时丢弃） */
 export interface MapsApiResponse {
   data: {
+    /** 全图容器定义（id -> { normalizedName }） */
+    lootContainers?: Record<string, { normalizedName?: string }>;
     maps: Record<
       string,
       {
@@ -208,6 +224,7 @@ export interface MapsApiResponse {
         locks?: ApiMapLock[];
         stationaryWeapons?: ApiMapStationaryWeapon[];
         switches?: ApiMapSwitch[];
+        lootContainers?: ApiMapLootSpot[];
       }
     >;
   };
