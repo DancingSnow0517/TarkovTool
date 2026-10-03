@@ -192,6 +192,12 @@ export interface ApiMapLootSpot {
   position: TaskPosition;
 }
 
+export interface ApiMapSeasonFileSpot {
+  position: TaskPosition;
+  /** 该点位可刷的赛季文件物品 id（裁剪时已过滤非赛季文件） */
+  files: string[];
+}
+
 /** 裁剪后缓存的地图标记数据（key 为 API 地图 id） */
 export interface ApiMapMarkers {
   extracts: ApiMapExtract[];
@@ -201,6 +207,7 @@ export interface ApiMapMarkers {
   stationaryWeapons: ApiMapStationaryWeapon[];
   switches: ApiMapSwitch[];
   lootContainers: ApiMapLootSpot[];
+  seasonFiles: ApiMapSeasonFileSpot[];
 }
 
 /** /{mode}/maps 裁剪后的缓存格式：容器定义表 + 各图标记数据 */
@@ -225,6 +232,8 @@ export interface MapsApiResponse {
         stationaryWeapons?: ApiMapStationaryWeapon[];
         switches?: ApiMapSwitch[];
         lootContainers?: ApiMapLootSpot[];
+        /** 散图刷新点（裁剪时过滤为只含赛季文件的点位） */
+        lootLoose?: { position: TaskPosition; items?: string[] }[];
       }
     >;
   };

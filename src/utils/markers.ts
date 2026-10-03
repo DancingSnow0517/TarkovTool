@@ -5,8 +5,10 @@ export interface MarkerCatDef {
   key: string;
   label: string;
   color: string;
-  /** public/assets/interactive/ 下的文件名 */
-  icon: string;
+  /** public/assets/interactive/ 下的文件名（本地图标） */
+  icon?: string;
+  /** 完整图标 URL（远程图标，优先级高于 icon） */
+  iconUrl?: string;
 }
 
 /** 标记分组（面板一级行，三态勾选联动子项） */
@@ -15,6 +17,24 @@ export interface MarkerGroupDef {
   label: string;
   children: MarkerCatDef[];
 }
+
+/* 赛季文件：散图拾取的特殊文件物品（EFT 赛季收集品），
+ * 图标直接用物品的 baseImageLink（https://assets.tarkov.dev/<id>-base-image.webp），
+ * 排序按全图点位数量从多到少 */
+export const SEASON_FILES = [
+  { key: "file-blueprint", id: "6a31824878450ec91c0ea1ae", label: "蓝图与技术文档" },
+  { key: "file-project", id: "6a3181f178450ec91c0ea1aa", label: "项目文件" },
+  { key: "file-staff", id: "6a3182b72fd891345e047eef", label: "员工文档" },
+  { key: "file-medical", id: "6a3182dc6cd8de21cf0a3a7d", label: "医疗文件" },
+  { key: "file-financial", id: "6a31807f17005505b70d5827", label: "财务文件" },
+  { key: "file-technical", id: "6a31830dde69ceafd805afa0", label: "技术文档" },
+  { key: "file-pmc-profile", id: "6a317b9692cfdcddcb02a58e", label: "PMC 个人档案" },
+  { key: "file-test", id: "6a31828557705071410ca00e", label: "测试文档" },
+];
+
+export const SEASON_FILE_IDS = new Set(SEASON_FILES.map((f) => f.id));
+
+export const SEASON_FILES_BY_ID = new Map(SEASON_FILES.map((f) => [f.id, f]));
 
 /* 分组与类别定义：key 与 config store 持久化的勾选状态对应；
  * 搜刮容器子项按 lootContainers 的 normalizedName 划分（同名不同 id 自动归并），
@@ -80,6 +100,16 @@ export const MARKER_GROUPS: MarkerGroupDef[] = [
       // 数据源无译名，保留 normalizedName（全图仅 1 个）
       { key: "shturmans-stash", label: "shturmans-stash", color: "#9d9d9d", icon: "container_weapon-box.png" },
     ],
+  },
+  {
+    key: "season-files",
+    label: "赛季文件",
+    children: SEASON_FILES.map((f) => ({
+      key: f.key,
+      label: f.label,
+      color: "#9d9d9d",
+      iconUrl: `https://assets.tarkov.dev/${f.id}-base-image.webp`,
+    })),
   },
 ];
 

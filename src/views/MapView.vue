@@ -10,7 +10,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchCached, fetchCachedTrimmed } from "@/api/client";
 import { useConfigStore } from "@/stores/config";
-import { MARKER_CATS, MARKER_GROUPS } from "@/utils/markers";
+import { MARKER_CATS, MARKER_GROUPS, SEASON_FILES_BY_ID, SEASON_FILE_IDS } from "@/utils/markers";
 import type {
   ApiMapMarkers,
   MapData,
@@ -419,10 +419,12 @@ function drawMapMarkers(
     bottom?: number,
   ) => {
     const cat = MARKER_CATS.get(catKey)!;
+    const iconUrl =
+      cat.iconUrl ?? import.meta.env.BASE_URL + "assets/interactive/" + (cat.icon ?? "");
     const rec: MarkerRec = {
       dot: L.marker(pos(position), {
         icon: L.icon({
-          iconUrl: import.meta.env.BASE_URL + "assets/interactive/" + cat.icon,
+          iconUrl,
           iconSize: [26, 26],
           iconAnchor: [13, 13],
         }),
@@ -504,6 +506,16 @@ function drawMapMarkers(
     if (!norm || !MARKER_CATS.has(norm)) continue;
     const name = tr[`${c.lootContainer} Name`] || norm;
     add(norm, name, "<i>搜刮容器</i>", c.position, undefined, c.position.y, c.position.y);
+  }
+  for (const spot of api.seasonFiles) {
+    spot.files.forEach((fid, idx) => {
+      const file = SEASON_FILES_BY_ID.get(fid);
+      if (!file) return;
+      // 同一点位刷多种文件时横向错开一点，避免图标完全重叠点不到
+      const position =
+        idx === 0 ? spot.position : { ...spot.position, x: spot.position.x + idx * 0.8 };
+      add(file.key, itemTr[`${fid} Name`] || file.label, "<i>赛季文件</i>", position, undefined, position.y, position.y);
+    });
   }
 }
 
@@ -598,8 +610,9 @@ function buildMarkerPanel() {
       box.onchange = () => commitMarkers([[cat.key, box.checked]]);
       const swatch = document.createElement("img");
       swatch.className = "mk-swatch";
-      swatch.src = import.meta.env.BASE_URL + "assets/interactive/" + cat.icon;
+      swatch.src = cat.iconUrl ?? import.meta.env.BASE_URL + "assets/interactive/" + (cat.icon ?? "");
       swatch.alt = "";
+      swatch.loading = "lazy";
       row.appendChild(box);
       row.appendChild(swatch);
       row.appendChild(document.createTextNode(cat.label));
@@ -943,12 +956,19 @@ async function init() {
           stationaryWeapons: m.stationaryWeapons ?? [],
           switches: m.switches ?? [],
           lootContainers: m.lootContainers ?? [],
+          // 散图刷新点只保留含赛季文件的，物品列表也只留文件 id
+          seasonFiles: (m.lootLoose ?? [])
+            .map((l) => ({
+              position: l.position,
+              files: (l.items ?? []).filter((i) => SEASON_FILE_IDS.has(i)),
+            }))
+            .filter((l) => l.files.length > 0),
         };
       }
       return out;
     },
     7 * 24 * 3600 * 1000,
-    2, // v2：新增容器定义表与 lootContainers
+    3, // v3：新增赛季文件点位（lootLoose 过滤）
   );
   const mapTr = (await fetchCached<TrResponse>(`/${gameMode}/maps_${lang}`)).data;
   // 上锁的门需要钥匙物品名（items_{lang} 的 "<id> Name" 键）
