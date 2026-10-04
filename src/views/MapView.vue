@@ -3,7 +3,7 @@
  * 模式/语言跟随导航栏下拉框（config store），不从 URL 读取。
  * 坐标系/投影与楼层分层逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)，
  * 页面行为对齐 web/map.js。 */
-import { h, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { LocationQuery, LocationQueryValue } from "vue-router";
 import L from "leaflet";
@@ -15,6 +15,8 @@ import { useDataStore } from "@/stores/data";
 import { useTrackStore } from "@/stores/track";
 import type { TrackPoint } from "@/stores/track";
 import { useRaidLogStore } from "@/stores/raidLog";
+import { useSyncStore } from "@/stores/sync";
+import SyncModal from "@/components/SyncModal.vue";
 import { MARKER_CATS, MARKER_GROUPS, SEASON_FILES_BY_ID, SEASON_FILE_IDS } from "@/utils/markers";
 import type {
   ApiMapMarkers,
@@ -34,6 +36,7 @@ const config = useConfigStore();
 const data = useDataStore();
 const track = useTrackStore();
 const raid = useRaidLogStore();
+const sync = useSyncStore();
 const message = useMessage();
 
 const mapEl = ref<HTMLDivElement>();
@@ -44,6 +47,33 @@ const styleSelectEl = ref<HTMLSelectElement>();
 const status = ref("加载中 ...");
 const zoomInfo = ref("");
 const raidTime = ref("");
+/** 指针（鼠标/触摸）位置的游戏坐标文本 "x, z" */
+const cursorPos = ref("");
+const syncModal = ref(false);
+
+/** 接收模式：URL 带 ?sync=<id> 时作为移动端接收 PC 位置同步 */
+const syncMode = computed(() => !!queryStr(route.query.sync));
+const currentMapKey = computed(() => queryStr(route.query.map) || "customs");
+
+const syncStatusText = computed(() => {
+  switch (sync.clientStatus) {
+    case "connecting":
+      return "同步连接中 ...";
+    case "connected":
+      return "已同步";
+    case "reconnecting":
+      return "同步重连中 ...";
+    default:
+      return "";
+  }
+});
+
+/** 断开同步：移除 URL 的 sync 参数，由 watcher 统一做拆连清理 */
+function disconnectSync() {
+  const query = { ...route.query };
+  delete query.sync;
+  void router.replace({ query });
+}
 
 /* ---- json.tarkov.dev 任务数据（仅声明地图页用到的字段） ---- */
 
@@ -348,10 +378,10 @@ function setFloor(layer: MapLayer | null) {
   }
   // 标记（撤离点/危险区）按楼层 + 勾选状态显隐
   updateMarkers();
-  // 面板选中态
+  // 面板选中态（跳过头部行，只匹配楼层行）
   const panel = floorPanelEl.value;
   if (panel) {
-    Array.from(panel.children).forEach((el, i) =>
+    Array.from(panel.querySelectorAll(".floor-item")).forEach((el, i) =>
       el.classList.toggle("active", mapData!.layers![i] === layer),
     );
   }
@@ -586,6 +616,29 @@ function commitMarkers(changes: (readonly [string, boolean])[]) {
 
 /** 标记面板收起状态：窄屏（手机）默认收起，点击标题切换；跨地图重建保持 */
 let markerCollapsed = window.innerWidth <= 768;
+
+/** 楼层面板收起状态：同标记面板 */
+let floorCollapsed = window.innerWidth <= 768;
+
+/** 窄屏下点击面板外区域自动收起展开的面板（捕获阶段监听，避免地图拦截事件） */
+function collapsePanelsOnOutsideClick(e: MouseEvent) {
+  if (window.innerWidth > 768) return;
+  const target = e.target as Node;
+  const floorPanel = floorPanelEl.value;
+  if (floorPanel && !floorPanel.hidden && !floorCollapsed && !floorPanel.contains(target)) {
+    floorCollapsed = true;
+    floorPanel.classList.add("collapsed");
+    const toggle = floorPanel.querySelector(".floor-toggle");
+    if (toggle) toggle.textContent = "▶";
+  }
+  const markerPanel = markerPanelEl.value;
+  if (markerPanel && !markerPanel.hidden && !markerCollapsed && !markerPanel.contains(target)) {
+    markerCollapsed = true;
+    markerPanel.classList.add("collapsed");
+    const toggle = markerPanel.querySelector(".mk-toggle");
+    if (toggle) toggle.textContent = "▶";
+  }
+}
 
 /** 分组勾选面板：组行三态（全选/部分/全不选），子项缩进；只列出当前地图存在的类别 */
 function buildMarkerPanel() {
@@ -1019,7 +1072,7 @@ function renderTrack() {
   const pts = track.points;
   pts.forEach((p, i) => {
     const ll = L.latLng(p.z, p.x);
-    if (i === pts.length - 1 && track.enabled) {
+    if (i === pts.length - 1 && (track.enabled || track.remote)) {
       L.marker(ll, {
         icon: L.divIcon({
           className: "track-self",
@@ -1050,15 +1103,18 @@ function followLatest() {
   map.flyTo(L.latLng(p.z, p.x), followZoom(), { duration: 0.4 });
 }
 
-// 新截图：重绘轨迹；位置不在当前地图时按设置自动跟随切图或给出可点击提示
+// 新截图：重绘轨迹；PC host 广播给移动端；位置不在当前地图时按设置自动跟随切图或给出可点击提示
 watch(
   () => track.points.length,
   async (n, prev) => {
     renderTrack();
-    if (n <= prev || !mapData || !track.enabled) return;
+    if (n <= prev) return;
     const p = track.points[n - 1];
+    if (track.enabled) sync.notifyPoint(p);
+    if (!mapData || (!track.enabled && !track.remote)) return;
     if (containsPoint(mapData, p.x, p.z)) {
-      if (config.followScreenshot) followLatest();
+      // 接收模式下跟随是本功能的核心用途，无视 followScreenshot 设置
+      if (config.followScreenshot || track.remote) followLatest();
       return;
     }
     const other = allMaps.find((m) => m.key !== mapData!.key && containsPoint(m, p.x, p.z));
@@ -1131,6 +1187,7 @@ async function init() {
   ).json()) as MapData[];
   allMaps = maps;
   mapData = maps.find((m) => m.key === mapParam) || maps.find((m) => m.key === "customs")!;
+  sync.notifyMap(mapData.key); // host 侧：更新快照中的当前地图（未开启同步时为无操作）
 
   // 日志同步中的战局在别的地图且事件较新：打开地图页时直接切过去（query watcher 会重建）。
   // 过期事件不恢复（避免被昨天/上一局的记录锁住），已应用过的事件不重复应用（保留手动切图）
@@ -1159,14 +1216,35 @@ async function init() {
 
   const floorPanel = floorPanelEl.value!;
   if (mapData.layers && mapData.layers.length) {
+    // 头部标题行：点击收起/展开（窄屏默认收起，跨地图重建保持状态）
+    const head = document.createElement("div");
+    head.className = "floor-head";
+    const headLabel = document.createElement("span");
+    headLabel.textContent = "楼层";
+    const headToggle = document.createElement("span");
+    headToggle.className = "floor-toggle";
+    const syncFloorToggle = () => {
+      headToggle.textContent = floorCollapsed ? "▶" : "▾";
+    };
+    head.onclick = () => {
+      floorCollapsed = !floorCollapsed;
+      floorPanel.classList.toggle("collapsed", floorCollapsed);
+      syncFloorToggle();
+    };
+    syncFloorToggle();
+    head.append(headLabel, headToggle);
+    floorPanel.appendChild(head);
     // 纵向单选楼层（不含地面层），再次点击已选楼层取消选择回到地面层
     mapData.layers.forEach((layer) => {
       const row = document.createElement("div");
       row.className = "floor-item";
       row.innerHTML = `<span class="dot"></span><span>${layer.name}</span>`;
-      row.onclick = () => setFloor(activeFloor === layer ? null : layer);
+      row.onclick = () => {
+        setFloor(activeFloor === layer ? null : layer);
+      };
       floorPanel.appendChild(row);
     });
+    floorPanel.classList.toggle("collapsed", floorCollapsed);
     floorPanel.hidden = false;
   }
 
@@ -1177,7 +1255,8 @@ async function init() {
     maxZoom: Math.max(7, mapData.maxZoom),
     maxBounds: getScaledBounds(mapData.bounds, 1.5),
     attributionControl: false,
-    zoomControl: true,
+    // 缩放按钮放左下角（自定义位置，见下方 zoomControl）
+    zoomControl: false,
     // 无极倍率：缩放不再取整；min/max 由各地图数据决定
     zoomSnap: 0,
     bounceAtZoomLimits: false,
@@ -1185,12 +1264,22 @@ async function init() {
     scrollWheelZoom: false,
   });
   map.fitBounds(mapBounds, { animate: false });
+  L.control.zoom({ position: "bottomleft" }).addTo(map);
   const updateZoom = () => {
     zoomInfo.value = `缩放: ${map!.getZoom().toFixed(1)}`;
   };
   map.on("zoomend zoom", updateZoom);
   updateZoom();
   mapEl.value!.addEventListener("wheel", onMapWheel, { passive: false });
+  // 指针位置的游戏坐标（x, z）：桌面鼠标 + 移动端触摸拖动
+  // Leaflet 触摸事件类型声明不带 latlng，但运行时提供（与鼠标事件同结构）
+  const showCursorPos = (e: L.LeafletEvent) => {
+    const { latlng } = e as L.LeafletMouseEvent;
+    cursorPos.value = `${latlng.lng.toFixed(1)}, ${latlng.lat.toFixed(1)}`;
+  };
+  map.on("mousemove", showCursorPos);
+  map.on("touchstart", showCursorPos);
+  map.on("touchmove", showCursorPos);
   startRaidTime(mapData.key);
 
   const useSvg = mapData.svgPath && styleParam !== "tile";
@@ -1260,7 +1349,8 @@ async function init() {
   buildMarkerPanel();
   updateMarkers();
   renderTrack();
-  if (followAfterInit) {
+  // 接收模式：进入页面时若已有远程轨迹点，视角直接聚焦玩家位置
+  if (followAfterInit || (track.remote && track.points.length)) {
     followAfterInit = false;
     followLatest();
   }
@@ -1310,8 +1400,34 @@ async function init() {
 }
 
 onMounted(() => {
+  document.addEventListener("click", collapsePanelsOnOutsideClick, true);
   init().catch((e: unknown) => setStatus(`加载失败: ${e instanceof Error ? e.message : String(e)}`));
 });
+
+// ?sync=<id>：进入/退出接收模式。参数变化重连，参数移除则断开并清空远程轨迹
+watch(
+  () => queryStr(route.query.sync),
+  (sid, prev) => {
+    if (sid && sid !== prev) {
+      sync.connectClient(sid);
+    } else if (!sid && sync.clientStatus !== "off") {
+      sync.disconnectClient();
+      track.leaveRemote();
+      renderTrack();
+    }
+  },
+  { immediate: true },
+);
+
+// 收到 PC 端地图切换（快照或 map 消息）：切到同一地图（query watcher 会重建地图）
+watch(
+  () => [sync.remoteMap, sync.remoteMapAt],
+  () => {
+    if (sync.remoteMap && sync.remoteMap !== currentMapKey.value) {
+      void router.push({ query: { ...route.query, map: sync.remoteMap } });
+    }
+  },
+);
 
 // 导航栏切换模式/语言时用新配置重建地图（点位数据按模式区分、文案按语言翻译）
 watch(
@@ -1334,29 +1450,51 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  document.removeEventListener("click", collapsePanelsOnOutsideClick, true);
   cleanup();
 });
 </script>
 
 <template>
   <div class="map-page">
-    <div class="map-topbar">
-      <select ref="styleSelectEl" title="地图样式">
-        <option value="">自动</option>
-        <option value="svg">抽象图</option>
-        <option value="tile">卫星图</option>
-      </select>
-      <span class="map-status">{{ status }}</span>
-      <button v-if="track.points.length" class="track-btn" title="清除轨迹点" @click="track.clear()">
-        清除轨迹
-      </button>
+    <div class="map-topleft">
+      <div ref="floorPanelEl" class="map-floor-panel" hidden></div>
+      <div class="map-topbar">
+        <select ref="styleSelectEl" title="地图样式">
+          <option value="">自动</option>
+          <option value="svg">抽象图</option>
+          <option value="tile">卫星图</option>
+        </select>
+        <span class="map-status">{{ status }}</span>
+        <button v-if="track.points.length" class="track-btn" title="清除轨迹点" @click="track.clear()">
+          清除轨迹
+        </button>
+        <template v-if="syncMode">
+          <span class="sync-badge" :class="sync.clientStatus" :title="sync.clientHint">
+            {{ syncStatusText }}
+          </span>
+          <button class="track-btn" title="断开位置同步" @click="disconnectSync">断开</button>
+        </template>
+        <button
+          v-else
+          class="track-btn"
+          :class="{ active: sync.hosting }"
+          title="同步玩家位置到手机（局域网直连）"
+          @click="syncModal = true"
+        >
+          同步到手机
+        </button>
+      </div>
+    </div>
+    <div v-show="raidTime || cursorPos || zoomInfo" class="map-status-chip">
       <span class="map-zoom-info">{{ zoomInfo }}</span>
+      <span v-if="cursorPos" class="map-cursor-pos">{{ cursorPos }}</span>
       <span class="map-raid-time">{{ raidTime }}</span>
     </div>
-    <div ref="floorPanelEl" class="map-floor-panel" hidden></div>
     <div ref="objPanelEl" class="map-obj-panel" hidden></div>
     <div ref="markerPanelEl" class="map-marker-panel" hidden></div>
     <div ref="mapEl" class="map-leaflet"></div>
+    <SyncModal v-model:show="syncModal" :map-key="currentMapKey" />
   </div>
 </template>
 
@@ -1374,11 +1512,18 @@ onBeforeUnmount(() => {
   background: #1a1b1e;
 }
 
-.map-page .map-topbar {
+/* 左上角容器：楼层面板 + 顶部栏横向排列，顶部栏紧跟面板实际宽度（无空隙） */
+.map-page .map-topleft {
   position: absolute;
   top: 10px;
-  left: 50px;
+  left: 10px;
   z-index: 1000;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.map-page .map-topbar {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -1415,6 +1560,25 @@ onBeforeUnmount(() => {
 .map-page .track-btn.active {
   color: #63e2b7;
   border-color: #63e2b7;
+}
+
+/* 位置同步状态徽章（接收模式） */
+.map-page .sync-badge {
+  border: 1px solid #3a3b40;
+  border-radius: 4px;
+  padding: 2px 8px;
+  user-select: none;
+}
+
+.map-page .sync-badge.connected {
+  color: #63e2b7;
+  border-color: #63e2b7;
+}
+
+.map-page .sync-badge.connecting,
+.map-page .sync-badge.reconnecting {
+  color: #e2c08d;
+  border-color: #e2c08d;
 }
 
 /* 截图追踪：当前位置箭头（self.png 默认朝下，按朝向旋转）+ 脉冲底圈 */
@@ -1457,17 +1621,37 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/* 右下角状态块：指针游戏坐标 + 战局时间（不拦截地图交互） */
+.map-page .map-status-chip {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  background: rgba(20, 21, 24, 0.85);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: #d8d8d8;
+  font: 12px/1.4 sans-serif;
+  pointer-events: none;
+}
+
+.map-page .map-cursor-pos {
+  color: #9d9d9d;
+  font-variant-numeric: tabular-nums;
+}
+
 /* SVG 地图：非当前楼层的分组隐藏（移植自 tarkov-dev） */
 .map-page .hidden-layer {
   display: none;
 }
 
-/* 楼层单选面板：缩放按钮下方纵向排列 */
+/* 楼层单选面板：在 .map-topleft 容器内（顶部栏左侧）；展开固定宽度，收起收缩到标题宽 */
 .map-page .map-floor-panel {
-  position: absolute;
-  top: 86px;
-  left: 10px;
-  z-index: 1000;
   display: flex;
   flex-direction: column;
   background: rgba(20, 21, 24, 0.85);
@@ -1476,10 +1660,35 @@ onBeforeUnmount(() => {
   padding: 4px;
   color: #d8d8d8;
   font: 13px/1.4 sans-serif;
-  min-width: 130px;
+  width: fit-content;
+}
+
+/* 展开时固定宽度，收起时收缩到标题宽度（与标记面板一致） */
+.map-page .map-floor-panel:not(.collapsed) {
+  width: 150px;
 }
 
 .map-page .map-floor-panel[hidden] {
+  display: none;
+}
+
+.map-page .floor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  padding: 2px 4px 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-page .floor-toggle {
+  color: #9d9d9d;
+  font-size: 11px;
+}
+
+.map-page .map-floor-panel.collapsed .floor-item {
   display: none;
 }
 
@@ -1695,7 +1904,8 @@ onBeforeUnmount(() => {
   color: #999;
 }
 
-/* 手机/窄屏：缩放按钮加大便于触摸；缩放数值隐藏；标记面板限高防遮挡 */
+/* 手机/窄屏：缩放按钮加大便于触摸；顶部栏独占第一行（不换行、超出横向滑动），
+ * 楼层面板换行到第二行左侧；标记面板下移到顶部栏下方避免重叠；面板限高防遮挡 */
 @media (max-width: 768px) {
   .map-page .leaflet-bar a {
     width: 36px;
@@ -1704,18 +1914,34 @@ onBeforeUnmount(() => {
     font-size: 18px;
   }
 
-  .map-page .map-zoom-info {
-    display: none;
+  .map-page .map-topleft {
+    right: 10px;
+    flex-wrap: wrap;
   }
 
   .map-page .map-topbar {
-    left: 56px;
-    right: 8px;
+    order: -1;
+    flex: 0 0 100%;
+    box-sizing: border-box;
     font-size: 12px;
-    overflow: hidden;
+    padding: 4px 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .map-page .map-topbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .map-page .map-topbar > * {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .map-page .map-marker-panel {
+    top: 52px;
     max-height: 55%;
     min-width: 0;
   }

@@ -58,8 +58,10 @@ const seen = new Set<string>();
 
 export const useTrackStore = defineStore("track", {
   state: () => ({
-    /** 是否正在监听 */
+    /** 是否正在监听（本地截图目录） */
     enabled: false,
+    /** 接收模式：轨迹点来自 PC 端 WebRTC 同步而非本地监听 */
+    remote: false,
     /** 截图目录名 */
     dirName: "",
     /** 轨迹点，按截图时间先后排序 */
@@ -84,6 +86,24 @@ export const useTrackStore = defineStore("track", {
       this.enabled = false;
     },
     clear() {
+      this.points = [];
+    },
+    /** 接收模式：应用 PC 端下发的全量快照 */
+    applyRemoteState(points: TrackPoint[]) {
+      this.remote = true;
+      this.points = points.slice(-MAX_POINTS);
+      this.lastAt = Date.now();
+    },
+    /** 接收模式：追加 PC 端广播的新截图点 */
+    pushRemotePoint(p: TrackPoint) {
+      this.remote = true;
+      this.points.push(p);
+      if (this.points.length > MAX_POINTS) this.points.shift();
+      this.lastAt = Date.now();
+    },
+    /** 退出接收模式并清空远程轨迹 */
+    leaveRemote() {
+      this.remote = false;
       this.points = [];
     },
     async startWatching(handle: FileSystemDirectoryHandle) {
