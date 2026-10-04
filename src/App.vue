@@ -138,7 +138,7 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
               </NSpace>
             </div>
           </header>
-          <main class="app-main">
+          <main class="app-main" :class="{ 'map-mode': route.name === 'map' }">
             <div class="main-inner">
               <RouterView />
             </div>
@@ -282,6 +282,16 @@ a:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 地图页全屏：不受居中宽度与内边距限制 */
+.app-main.map-mode {
+  padding: 0;
+  overflow: hidden;
+}
+
+.app-main.map-mode .main-inner {
+  max-width: none;
 }
 
 @media (max-width: 768px) {

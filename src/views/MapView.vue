@@ -575,6 +575,9 @@ function commitMarkers(changes: (readonly [string, boolean])[]) {
   updateMarkers();
 }
 
+/** 标记面板收起状态：窄屏（手机）默认收起，点击标题切换；跨地图重建保持 */
+let markerCollapsed = window.innerWidth <= 768;
+
 /** 分组勾选面板：组行三态（全选/部分/全不选），子项缩进；只列出当前地图存在的类别 */
 function buildMarkerPanel() {
   const panel = markerPanelEl.value!;
@@ -582,8 +585,25 @@ function buildMarkerPanel() {
   let any = false;
   const title = document.createElement("div");
   title.className = "mk-title";
-  title.textContent = "标记";
+  const titleText = document.createElement("span");
+  titleText.textContent = "标记";
+  const toggle = document.createElement("span");
+  toggle.className = "mk-toggle";
+  title.appendChild(titleText);
+  title.appendChild(toggle);
+  title.onclick = () => {
+    markerCollapsed = !markerCollapsed;
+    panel.classList.toggle("collapsed", markerCollapsed);
+    syncToggle();
+  };
+  function syncToggle() {
+    toggle.textContent = markerCollapsed ? "▶" : "▾";
+  }
+  syncToggle();
   panel.appendChild(title);
+  const body = document.createElement("div");
+  body.className = "mk-body";
+  panel.appendChild(body);
   for (const group of MARKER_GROUPS) {
     const present = group.children.filter((c) => markerCounts[c.key]);
     if (!present.length) continue;
@@ -600,7 +620,7 @@ function buildMarkerPanel() {
       commitMarkers(present.map((c) => [c.key, enabledCount < present.length] as const));
     groupRow.appendChild(groupBox);
     groupRow.appendChild(document.createTextNode(group.label));
-    panel.appendChild(groupRow);
+    body.appendChild(groupRow);
     for (const cat of present) {
       const row = document.createElement("label");
       row.className = "mk-row mk-child-row";
@@ -616,9 +636,10 @@ function buildMarkerPanel() {
       row.appendChild(box);
       row.appendChild(swatch);
       row.appendChild(document.createTextNode(cat.label));
-      panel.appendChild(row);
+      body.appendChild(row);
     }
   }
+  panel.classList.toggle("collapsed", markerCollapsed);
   panel.hidden = !any;
 }
 
@@ -816,7 +837,96 @@ function findAndDraw(tasksData: TasksResponse["data"], tr: TranslationMap): stri
 
 /* ---- 生命周期：清理旧地图实例与状态 ---- */
 
+/* ---- 滚轮缩放：固定倍率（新=原×倍率 / 原÷倍率）+ 平滑曲线 ----
+ * 实现照搬 Leaflet 捏合缩放的内部路径：
+ * 动画帧里用 _move(..., {pinch:true}) 只改 CSS 变换（瓦片不重建，无黑屏）；
+ * 曲线收尾时用 _animateZoom 结算，瓦片在缩放动画结束、新级别加载就绪后才替换（旧瓦片保留不裁剪）。
+ */
+
+/** Leaflet 内部方法（捏合缩放同款调用方式） */
+interface MapInternals extends L.Map {
+  _animatingZoom: boolean;
+  _mapPane: HTMLElement;
+  _move(center: L.LatLng, zoom: number, data?: unknown, supressEvent?: boolean): void;
+  _moveStart(zoomChanged: boolean, noMoveStart: boolean): void;
+  _animateZoom(center: L.LatLng, zoom: number, startAnim: boolean, noUpdate?: boolean): void;
+  _stop(): void;
+}
+
+const WHEEL_FACTOR = 1.2;
+let wheelTarget: number | null = null;
+let wheelCursorPt: L.Point | null = null;
+let wheelLatLng: L.LatLng | null = null;
+let wheelRaf = 0;
+let wheelMoved = false;
+
+function onMapWheel(e: WheelEvent) {
+  if (!map) return;
+  e.preventDefault();
+  const m = map as MapInternals;
+  m._stop();
+  // 上一次结算动画（_animateZoom 的 CSS 过渡）还在跑时立即终止：
+  // 否则其 250ms 收尾定时器会把视图拉回旧目标中心/缩放（连续滚轮时的抖动来源）。
+  // 清掉 _animatingZoom 后定时器触发即直接返回；内部缩放值在动画开始时已是目标值，
+  // 下面的 base = getZoom() 正好从该值继续乘/除倍率
+  if (m._animatingZoom) {
+    m._animatingZoom = false;
+    L.DomUtil.removeClass(m._mapPane, "leaflet-zoom-anim");
+  }
+  wheelCursorPt = map.mouseEventToContainerPoint(e);
+  wheelLatLng = map.containerPointToLatLng(wheelCursorPt);
+  // 连续滚动时中断上一次动画：以当前实际缩放为基准再乘/除倍率
+  const base = map.getZoom();
+  const next = Math.min(
+    map.getMaxZoom(),
+    Math.max(map.getMinZoom(), e.deltaY < 0 ? base * WHEEL_FACTOR : base / WHEEL_FACTOR),
+  );
+  if (next === base) return;
+  wheelTarget = next;
+  if (!wheelRaf) wheelRaf = requestAnimationFrame(stepWheelZoom);
+}
+
+/** 保持光标所指经纬度不动：由目标缩放反推视图中心 */
+function wheelCenterAt(zoom: number): L.LatLng {
+  const m = map!;
+  const pt = wheelCursorPt!;
+  const half = m.getSize().divideBy(2);
+  return m.unproject(m.project(wheelLatLng!, zoom).subtract(pt).add(half), zoom);
+}
+
+function stepWheelZoom() {
+  wheelRaf = 0;
+  if (!map || wheelTarget == null || !wheelCursorPt || !wheelLatLng) return;
+  const m = map as MapInternals;
+  const z = map.getZoom();
+  const diff = wheelTarget - z;
+  if (!wheelMoved) {
+    m._moveStart(true, false);
+    wheelMoved = true;
+  }
+  // 剩余差值交给 Leaflet 原生缩放动画收尾（CSS 过渡平滑滑到位，结束后才结算瓦片级别）
+  if (Math.abs(diff) < 0.08) {
+    m._animateZoom(wheelCenterAt(wheelTarget), wheelTarget, true);
+    wheelTarget = null;
+    wheelMoved = false;
+    return;
+  }
+  // 每帧逼近目标 1/8 的差值，形成较长的平滑减速曲线；pinch 标记让瓦片层只做变换不重建
+  const next = z + diff * 0.12;
+  m._move(wheelCenterAt(next), next, { pinch: true, round: false }, undefined);
+  wheelRaf = requestAnimationFrame(stepWheelZoom);
+}
+
 function cleanup() {
+  if (wheelRaf) {
+    cancelAnimationFrame(wheelRaf);
+    wheelRaf = 0;
+  }
+  wheelTarget = null;
+  wheelLatLng = null;
+  wheelCursorPt = null;
+  wheelMoved = false;
+  mapEl.value?.removeEventListener("wheel", onMapWheel);
   if (raidTimer) {
     clearInterval(raidTimer);
     raidTimer = null;
@@ -902,13 +1012,19 @@ async function init() {
     maxBounds: getScaledBounds(mapData.bounds, 1.5),
     attributionControl: false,
     zoomControl: true,
+    // 无极倍率：缩放不再取整；min/max 由各地图数据决定
+    zoomSnap: 0,
+    bounceAtZoomLimits: false,
+    // 滚轮走自定义固定倍率 + 平滑曲线；触摸捏合走 Leaflet 原生（跟随手势，不插值）
+    scrollWheelZoom: false,
   });
   map.fitBounds(mapBounds, { animate: false });
   const updateZoom = () => {
     zoomInfo.value = `缩放: ${map!.getZoom().toFixed(1)}`;
   };
-  map.on("zoomend", updateZoom);
+  map.on("zoomend zoom", updateZoom);
   updateZoom();
+  mapEl.value!.addEventListener("wheel", onMapWheel, { passive: false });
   startRaidTime(mapData.key);
 
   const useSvg = mapData.svgPath && styleParam !== "tile";
@@ -1212,8 +1328,23 @@ onBeforeUnmount(() => {
 }
 
 .map-page .mk-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   font-weight: 700;
   padding: 2px 4px 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-page .mk-toggle {
+  color: #9d9d9d;
+  font-size: 11px;
+}
+
+.map-page .map-marker-panel.collapsed .mk-body {
+  display: none;
 }
 
 .map-page .mk-row {
@@ -1340,5 +1471,35 @@ onBeforeUnmount(() => {
 
 .map-page .leaflet-container a.leaflet-popup-close-button {
   color: #999;
+}
+
+/* 手机/窄屏：缩放按钮加大便于触摸；缩放数值隐藏；标记面板限高防遮挡 */
+@media (max-width: 768px) {
+  .map-page .leaflet-bar a {
+    width: 36px;
+    height: 36px;
+    line-height: 36px;
+    font-size: 18px;
+  }
+
+  .map-page .map-zoom-info {
+    display: none;
+  }
+
+  .map-page .map-topbar {
+    left: 56px;
+    right: 8px;
+    font-size: 12px;
+    overflow: hidden;
+  }
+
+  .map-page .map-marker-panel {
+    max-height: 55%;
+    min-width: 0;
+  }
+
+  .map-page .map-obj-panel {
+    width: 180px;
+  }
 }
 </style>
