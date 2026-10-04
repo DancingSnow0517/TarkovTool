@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
-import { MenuOutlined, SettingsOutlined } from "@vicons/material";
+import { DarkModeOutlined, LightModeOutlined, MenuOutlined, SettingsOutlined } from "@vicons/material";
 import {
   darkTheme,
   dateZhCN,
@@ -14,6 +14,7 @@ import {
   NMessageProvider,
   NModal,
   NNotificationProvider,
+  NPopover,
   NSelect,
   NSpace,
   NSwitch,
@@ -146,10 +147,9 @@ const PRIMARY_PRESETS = [
   { label: "青", value: "#14b8a6" },
 ];
 
-const themeOptions = [
-  { label: "暗色", value: "dark" },
-  { label: "亮色", value: "light" },
-];
+function toggleTheme() {
+  config.theme = config.theme === "dark" ? "light" : "dark";
+}
 
 /** 地图菜单数据：maps.json 的地图列表 + 按当前模式/语言的本地化名称 */
 const maps = ref<MapData[]>([]);
@@ -212,11 +212,44 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
                   </template>
                 </NButton>
                 <NMenu v-else :value="menuValue" mode="horizontal" :options="menuOptions" />
-                <NButton quaternary circle title="设置" @click="settings = true">
-                  <template #icon>
-                    <NIcon :size="20"><SettingsOutlined /></NIcon>
-                  </template>
-                </NButton>
+                <NSpace align="center" :size="4" :wrap="false">
+                  <NPopover trigger="click" placement="bottom" :show-arrow="false">
+                    <template #trigger>
+                      <NButton quaternary circle title="主题色">
+                        <span class="color-dot" :style="{ background: config.primaryColor }"></span>
+                      </NButton>
+                    </template>
+                    <div class="color-presets">
+                      <button
+                        v-for="c in PRIMARY_PRESETS"
+                        :key="c.value"
+                        class="color-swatch"
+                        :class="{ active: config.primaryColor === c.value }"
+                        :style="{ background: c.value }"
+                        :title="c.label"
+                        @click="config.primaryColor = c.value"
+                      >{{ config.primaryColor === c.value ? "✓" : "" }}</button>
+                    </div>
+                  </NPopover>
+                  <NButton
+                    quaternary
+                    circle
+                    :title="config.theme === 'dark' ? '切换到亮色' : '切换到暗色'"
+                    @click="toggleTheme"
+                  >
+                    <template #icon>
+                      <NIcon :size="20">
+                        <LightModeOutlined v-if="config.theme === 'dark'" />
+                        <DarkModeOutlined v-else />
+                      </NIcon>
+                    </template>
+                  </NButton>
+                  <NButton quaternary circle title="设置" @click="settings = true">
+                    <template #icon>
+                      <NIcon :size="20"><SettingsOutlined /></NIcon>
+                    </template>
+                  </NButton>
+                </NSpace>
               </NSpace>
             </div>
           </header>
@@ -239,24 +272,6 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
           <div class="settings-row">
             <span>语言</span>
             <NSelect v-model:value="config.lang" :options="langOptions" style="width: 230px" />
-          </div>
-          <div class="settings-row">
-            <span>主题</span>
-            <NSelect v-model:value="config.theme" :options="themeOptions" style="width: 230px" />
-          </div>
-          <div class="settings-row">
-            <span>主题色</span>
-            <div class="color-presets">
-              <button
-                v-for="c in PRIMARY_PRESETS"
-                :key="c.value"
-                class="color-swatch"
-                :class="{ active: config.primaryColor === c.value }"
-                :style="{ background: c.value }"
-                :title="c.label"
-                @click="config.primaryColor = c.value"
-              >{{ config.primaryColor === c.value ? "✓" : "" }}</button>
-            </div>
           </div>
           <div class="settings-row">
             <span>截图目录</span>
@@ -538,6 +553,14 @@ a:hover {
 .color-presets {
   display: flex;
   gap: 8px;
+}
+
+/* 头部主题色按钮里的当前色圆点 */
+.color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 .color-swatch {
