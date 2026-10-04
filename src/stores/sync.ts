@@ -26,7 +26,9 @@ export type SyncMsg =
 
 export type ClientStatus = "off" | "connecting" | "connected" | "reconnecting";
 
-const NTFY = "https://ntfy.sh";
+/** 信令服务器：默认自建 Worker（ntfy 协议子集）；可用构建环境变量 VITE_SIGNALING_URL 覆盖（如回退公共 ntfy.sh） */
+const SIGNALING: string =
+  import.meta.env.VITE_SIGNALING_URL || "https://signal.dancingsnow.xyz";
 const TOPIC_PREFIX = "ttk-sync-";
 /** client 未连接时重新发布 join 的间隔 */
 const JOIN_INTERVAL_MS = 8000;
@@ -42,9 +44,9 @@ function randomStr(len: number): string {
   return s;
 }
 
-/** 订阅 ntfy topic（SSE，断线由 EventSource 自动重连），解析出业务消息体 */
+/** 订阅信令 topic（SSE，断线由 EventSource 自动重连），解析出业务消息体（兼容 ntfy 封套与自建 Worker） */
 function subscribe(topic: string, onMsg: (msg: unknown) => void): EventSource {
-  const es = new EventSource(`${NTFY}/${topic}/sse`);
+  const es = new EventSource(`${SIGNALING}/${topic}/sse`);
   es.onmessage = (e: MessageEvent<string>) => {
     try {
       const env = JSON.parse(e.data) as { event: string; message: string };
@@ -58,9 +60,9 @@ function subscribe(topic: string, onMsg: (msg: unknown) => void): EventSource {
   return es;
 }
 
-/** 发布信令消息到 ntfy topic */
+/** 发布信令消息到 topic */
 async function publish(topic: string, msg: unknown): Promise<void> {
-  const r = await fetch(`${NTFY}/${topic}`, { method: "POST", body: JSON.stringify(msg) });
+  const r = await fetch(`${SIGNALING}/${topic}`, { method: "POST", body: JSON.stringify(msg) });
   if (!r.ok) throw new Error(`信令发布失败: HTTP ${r.status}`);
 }
 
