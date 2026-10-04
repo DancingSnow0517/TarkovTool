@@ -3,3 +3,6 @@ dist/
 *.local
 *.tsbuildinfo
 .idea/
+
+# wrangler 本地状态
+.wrangler/
