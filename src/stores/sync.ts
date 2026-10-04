@@ -273,7 +273,13 @@ export const useSyncStore = defineStore("sync", {
         clientDc.onclose = () => this.scheduleReconnect();
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") this.scheduleReconnect();
+        console.warn("同步连接状态变化:", pc.connectionState, "ice:", pc.iceConnectionState);
+        if (pc.connectionState === "failed") {
+          this.scheduleReconnect(`连接失败（${pc.iceConnectionState}）`);
+        }
+      };
+      pc.oniceconnectionstatechange = () => {
+        console.warn("ICE 状态变化:", pc.iceConnectionState);
       };
       await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
       await pc.setLocalDescription();
@@ -285,12 +291,12 @@ export const useSyncStore = defineStore("sync", {
       });
     },
 
-    /** client：DataChannel 断开后退避重连（重新走 join 流程） */
-    scheduleReconnect() {
+    /** client：DataChannel 断开后退避重连（重新走 join 流程）；reason 为诊断信息（如 ICE 状态） */
+    scheduleReconnect(reason = "") {
       if (retryTimer) return;
       if (this.clientStatus !== "connected" && this.clientStatus !== "connecting") return;
       this.clientStatus = "reconnecting";
-      this.clientHint = "连接已断开，重连中 ...";
+      this.clientHint = reason ? `${reason}，重连中 ...` : "连接已断开，重连中 ...";
       const delay = Math.min(RETRY_BASE_MS * 2 ** retryCount, RETRY_MAX_MS);
       retryCount++;
       retryTimer = setTimeout(() => {
