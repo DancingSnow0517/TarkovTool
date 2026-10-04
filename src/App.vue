@@ -205,7 +205,7 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
         <div class="app-shell">
           <header class="app-header">
             <div class="header-inner">
-              <NSpace align="center" justify="space-between" :wrap="false">
+              <div class="header-row">
                 <NButton v-if="narrow" quaternary circle title="菜单" @click="drawer = true">
                   <template #icon>
                     <NIcon :size="22"><MenuOutlined /></NIcon>
@@ -250,7 +250,7 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
                     </template>
                   </NButton>
                 </NSpace>
-              </NSpace>
+              </div>
             </div>
           </header>
           <main class="app-main" :class="{ 'map-mode': route.name === 'map' }">
@@ -275,13 +275,13 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
           </div>
           <div class="settings-row">
             <span>截图目录</span>
-            <NSpace align="center" :size="8">
+            <div class="settings-actions">
               <span v-if="track.enabled" class="hint-ok">监听中：{{ track.dirName }}</span>
               <NButton size="small" @click="selectTrackDir(track.enabled)">
                 {{ track.enabled ? "重新选择" : "选择文件夹" }}
               </NButton>
               <NButton v-if="track.enabled" size="small" @click="stopTrack">停止</NButton>
-            </NSpace>
+            </div>
           </div>
           <div class="settings-hint">
             监听后，游戏内截图会自动在地图页标记玩家位置与朝向（仅 Chrome / Edge）。
@@ -290,13 +290,13 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
           </div>
           <div class="settings-row">
             <span>Logs 目录</span>
-            <NSpace align="center" :size="8">
+            <div class="settings-actions">
               <span v-if="raid.enabled" class="hint-ok">监听中：{{ raid.dirName }}</span>
               <NButton size="small" @click="selectRaidDir(raid.enabled)">
                 {{ raid.enabled ? "重新选择" : "选择文件夹" }}
               </NButton>
               <NButton v-if="raid.enabled" size="small" @click="stopRaid">停止</NButton>
-            </NSpace>
+            </div>
           </div>
           <div class="settings-hint">
             监听后，可从日志检测进入战局的地图（线上 / PVE / 训练均支持）。
@@ -512,6 +512,18 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .settings-row:last-child {
