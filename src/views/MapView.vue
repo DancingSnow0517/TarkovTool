@@ -3,13 +3,18 @@
  * 模式/语言跟随导航栏下拉框（config store），不从 URL 读取。
  * 坐标系/投影与楼层分层逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)，
  * 页面行为对齐 web/map.js。 */
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { h, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { LocationQuery, LocationQueryValue } from "vue-router";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useMessage } from "naive-ui";
 import { fetchCached, fetchCachedTrimmed } from "@/api/client";
 import { useConfigStore } from "@/stores/config";
+import { useDataStore } from "@/stores/data";
+import { useTrackStore } from "@/stores/track";
+import type { TrackPoint } from "@/stores/track";
+import { useRaidLogStore } from "@/stores/raidLog";
 import { MARKER_CATS, MARKER_GROUPS, SEASON_FILES_BY_ID, SEASON_FILE_IDS } from "@/utils/markers";
 import type {
   ApiMapMarkers,
@@ -26,6 +31,10 @@ import type {
 const route = useRoute();
 const router = useRouter();
 const config = useConfigStore();
+const data = useDataStore();
+const track = useTrackStore();
+const raid = useRaidLogStore();
+const message = useMessage();
 
 const mapEl = ref<HTMLDivElement>();
 const floorPanelEl = ref<HTMLDivElement>();
@@ -941,6 +950,7 @@ function cleanup() {
   baseTileLayer = null;
   floorOverlay = null;
   activeFloor = null;
+  trackLayer = null;
   focusLayers = [];
   labelMarkers = [];
   markerRecs = [];
@@ -958,6 +968,146 @@ function cleanup() {
     markerPanelEl.value.hidden = true;
   }
 }
+
+/* ---- 截图位置追踪 / 日志自动切图 ---- */
+
+let allMaps: MapData[] = [];
+let trackLayer: L.LayerGroup | null = null;
+let mapNamesCache: Record<string, string> = {};
+/** 已应用的日志切图事件时间戳：只有更新的事件才会触发自动切图，手动切图不被覆盖 */
+let raidAppliedAt = 0;
+/** 日志事件超过该时长视为过期（上一局/昨天的战局），打开地图页时不恢复 */
+const RAID_EVENT_FRESH_MS = 3 * 3600 * 1000;
+/** 截图触发跨图自动切换后，重建完成时把视角居中到玩家位置 */
+let followAfterInit = false;
+
+async function mapDisplayName(md: MapData): Promise<string> {
+  if (!Object.keys(mapNamesCache).length) {
+    mapNamesCache = await data.loadMapNames(config.mode, config.lang);
+  }
+  return mapNamesCache[md.apiIds[0]] ?? md.key;
+}
+
+/** 游戏坐标是否落在地图 bounds 内 */
+function containsPoint(md: MapData, x: number, z: number): boolean {
+  const [a, b] = md.bounds;
+  return (
+    x >= Math.min(a[0], b[0]) && x <= Math.max(a[0], b[0]) && z >= Math.min(a[1], b[1]) && z <= Math.max(a[1], b[1])
+  );
+}
+
+/** 视角朝向在屏幕上的角度（度）。CRS 变换是仿射的，角度与缩放无关，取任意 zoom 投影即可 */
+function headingDeg(p: TrackPoint): number {
+  const m = map!;
+  const z = m.getZoom();
+  const p0 = m.project(L.latLng(p.z, p.x), z);
+  const p1 = m.project(L.latLng(p.z + p.fz, p.x + p.fx), z);
+  // 屏幕坐标 y 向下，正下方为 90°；图片默认朝下，故减 90° 修正
+  return (Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180) / Math.PI - 90;
+}
+
+/** 视角跟随的目标缩放：固定 4 倍左右（实测合适的观察倍率），不大幅拉近 */
+function followZoom(): number {
+  return 4;
+}
+
+/** 渲染轨迹：历史点为小圆点，最新点为脉冲底圈 + 按朝向旋转的玩家箭头 */
+function renderTrack() {
+  if (!map) return;
+  if (!trackLayer) trackLayer = L.layerGroup().addTo(map);
+  trackLayer.clearLayers();
+  const pts = track.points;
+  pts.forEach((p, i) => {
+    const ll = L.latLng(p.z, p.x);
+    if (i === pts.length - 1 && track.enabled) {
+      L.marker(ll, {
+        icon: L.divIcon({
+          className: "track-self",
+          html:
+            `<div class="track-pulse"></div>` +
+            `<img class="track-arrow" src="${import.meta.env.BASE_URL}assets/interactive/self.png" ` +
+            `style="transform: rotate(${headingDeg(p)}deg)" alt="">`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        }),
+        zIndexOffset: 100000,
+      })
+        .bindTooltip(`${p.time}　高度 ${p.y.toFixed(1)}m　FOV ${p.fov}`, { direction: "top", offset: [0, -14] })
+        .addTo(trackLayer!);
+    } else {
+      L.circleMarker(ll, { radius: 5, color: "#63e2b7", weight: 1, opacity: 0.7, fillOpacity: 0.35 })
+        .bindTooltip(`${p.time}　高度 ${p.y.toFixed(1)}m`)
+        .addTo(trackLayer!);
+    }
+  });
+}
+
+/** 视角居中到最新截图位置（若在当前地图内） */
+function followLatest() {
+  if (!map || !mapData || !track.points.length) return;
+  const p = track.points[track.points.length - 1];
+  if (!containsPoint(mapData, p.x, p.z)) return;
+  map.flyTo(L.latLng(p.z, p.x), followZoom(), { duration: 0.4 });
+}
+
+// 新截图：重绘轨迹；位置不在当前地图时按设置自动跟随切图或给出可点击提示
+watch(
+  () => track.points.length,
+  async (n, prev) => {
+    renderTrack();
+    if (n <= prev || !mapData || !track.enabled) return;
+    const p = track.points[n - 1];
+    if (containsPoint(mapData, p.x, p.z)) {
+      if (config.followScreenshot) followLatest();
+      return;
+    }
+    const other = allMaps.find((m) => m.key !== mapData!.key && containsPoint(m, p.x, p.z));
+    if (!other) {
+      message.warning(`新截图位置 (${p.x.toFixed(0)}, ${p.z.toFixed(0)}) 不在任何已知地图范围内`);
+      return;
+    }
+    const name = await mapDisplayName(other);
+    if (config.autoMapScreenshot) {
+      // 截图跟随优先于日志恢复：压制日志的过期事件，避免被拉回旧战局地图
+      raidAppliedAt = Math.max(raidAppliedAt, raid.lastAt);
+      followAfterInit = config.followScreenshot;
+      message.success(`截图位置位于「${name}」，已自动切换`);
+      void router.push({ query: { ...route.query, map: other.key } });
+      return;
+    }
+    message.warning(
+      () =>
+        h(
+          "a",
+          {
+            style: "cursor: pointer; text-decoration: underline;",
+            onClick: () => router.push({ query: { ...route.query, map: other.key } }),
+          },
+          `截图位置位于「${name}」，点击切换`,
+        ),
+      { duration: 8000 },
+    );
+  },
+);
+
+// 日志检测到新进战局：自动切换地图页到对应地图（只响应新事件）
+watch(
+  () => `${raid.mapKey}@${raid.lastAt}`,
+  async () => {
+    if (!raid.enabled || !raid.mapKey || !config.autoMapLog) return;
+    if (raid.lastAt <= raidAppliedAt) return;
+    const current = queryStr(route.query.map) || "customs";
+    if (raid.mapKey === current) {
+      raidAppliedAt = raid.lastAt;
+      return;
+    }
+    raidAppliedAt = raid.lastAt;
+    const md = allMaps.find((m) => m.key === raid.mapKey);
+    const name = md ? await mapDisplayName(md) : raid.mapKey;
+    message.success(`日志检测到进入「${name}」，已自动切换地图`);
+    void router.push({ query: { ...route.query, map: raid.mapKey } });
+  },
+);
 
 /* ---- 主流程 ---- */
 
@@ -979,7 +1129,23 @@ async function init() {
   const maps = (await (
     await fetch(import.meta.env.BASE_URL + "maps.json")
   ).json()) as MapData[];
+  allMaps = maps;
   mapData = maps.find((m) => m.key === mapParam) || maps.find((m) => m.key === "customs")!;
+
+  // 日志同步中的战局在别的地图且事件较新：打开地图页时直接切过去（query watcher 会重建）。
+  // 过期事件不恢复（避免被昨天/上一局的记录锁住），已应用过的事件不重复应用（保留手动切图）
+  if (
+    raid.enabled &&
+    config.autoMapLog &&
+    raid.mapKey &&
+    raid.mapKey !== mapData.key &&
+    raid.lastAt > raidAppliedAt &&
+    Date.now() - raid.lastAt < RAID_EVENT_FRESH_MS
+  ) {
+    raidAppliedAt = raid.lastAt;
+    void router.replace({ query: { ...route.query, map: raid.mapKey } });
+    return;
+  }
 
   const styleSelect = styleSelectEl.value!;
   styleSelect.value = styleParam;
@@ -1093,6 +1259,11 @@ async function init() {
   if (apiId) drawMapMarkers(apiMarkers.maps[apiId], apiMarkers.containerDefs, mapTr, itemTr);
   buildMarkerPanel();
   updateMarkers();
+  renderTrack();
+  if (followAfterInit) {
+    followAfterInit = false;
+    followLatest();
+  }
 
   if (!qIds.length) {
     setStatus("");
@@ -1176,6 +1347,9 @@ onBeforeUnmount(() => {
         <option value="tile">卫星图</option>
       </select>
       <span class="map-status">{{ status }}</span>
+      <button v-if="track.points.length" class="track-btn" title="清除轨迹点" @click="track.clear()">
+        清除轨迹
+      </button>
       <span class="map-zoom-info">{{ zoomInfo }}</span>
       <span class="map-raid-time">{{ raidTime }}</span>
     </div>
@@ -1222,6 +1396,54 @@ onBeforeUnmount(() => {
   border: 1px solid #3a3b40;
   border-radius: 4px;
   padding: 2px 4px;
+}
+
+.map-page .track-btn {
+  background: transparent;
+  border: 1px solid #3a3b40;
+  color: #d8d8d8;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.map-page .track-btn:hover {
+  border-color: #63e2b7;
+}
+
+.map-page .track-btn.active {
+  color: #63e2b7;
+  border-color: #63e2b7;
+}
+
+/* 截图追踪：当前位置箭头（self.png 默认朝下，按朝向旋转）+ 脉冲底圈 */
+.track-self {
+  position: relative;
+}
+
+.track-arrow {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.track-pulse {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: rgba(99, 226, 183, 0.45);
+  animation: track-pulse 1.5s ease-out infinite;
+}
+
+@keyframes track-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 226, 183, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(99, 226, 183, 0);
+  }
 }
 
 .map-page .map-status:empty {

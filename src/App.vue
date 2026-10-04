@@ -16,6 +16,8 @@ import {
   NNotificationProvider,
   NSelect,
   NSpace,
+  NSwitch,
+  NTooltip,
   zhCN,
   type GlobalThemeOverrides,
   type MenuOption,
@@ -23,16 +25,96 @@ import {
 import type { MapData } from "@/api/types";
 import { DEFAULT_PRIMARY, GAME_MODES, LANGUAGES, useConfigStore } from "@/stores/config";
 import { useDataStore } from "@/stores/data";
+import { useTrackStore } from "@/stores/track";
+import { useRaidLogStore } from "@/stores/raidLog";
+import { loadDirHandle } from "@/utils/fs-watch";
 import { useNarrow } from "@/utils/breakpoint";
 import { primaryVariants } from "@/utils/color";
 
 const route = useRoute();
 const config = useConfigStore();
 const data = useDataStore();
+const track = useTrackStore();
+const raid = useRaidLogStore();
 const narrow = useNarrow();
 
 const settings = ref(false);
 const drawer = ref(false);
+const trackErr = ref("");
+const raidErr = ref("");
+
+/** 选择/重新选择截图目录并开始监听（点击即用户手势，可弹授权） */
+async function selectTrackDir(forcePicker = false) {
+  trackErr.value = "";
+  const err = await track.enable(forcePicker);
+  if (err) {
+    trackErr.value = err;
+    return;
+  }
+  config.trackIntent = true;
+  config.persist();
+}
+
+function stopTrack() {
+  track.disable();
+  config.trackIntent = false;
+  config.persist();
+}
+
+/** 选择/重新选择 Logs 目录并开始监听 */
+async function selectRaidDir(forcePicker = false) {
+  raidErr.value = "";
+  const err = await raid.enable(forcePicker);
+  if (err) {
+    raidErr.value = err;
+    return;
+  }
+  config.raidLogIntent = true;
+  config.persist();
+}
+
+function stopRaid() {
+  raid.disable();
+  config.raidLogIntent = false;
+  config.persist();
+}
+
+function onAutoMapLog(v: boolean) {
+  config.autoMapLog = v;
+  config.persist();
+}
+
+function onAutoMapScreenshot(v: boolean) {
+  config.autoMapScreenshot = v;
+  config.persist();
+}
+
+function onFollowScreenshot(v: boolean) {
+  config.followScreenshot = v;
+  config.persist();
+}
+
+/** 页面加载时静默恢复监听：同一会话内刷新页面授权仍有效（无需手势）；
+ * 浏览器重启后权限失效，需在设置里重新选择目录 */
+async function resumeWatching() {
+  if (config.trackIntent && !track.enabled) {
+    try {
+      const h = await loadDirHandle("screenshotDir");
+      if (h && (await h.queryPermission({ mode: "read" })) === "granted") await track.startWatching(h);
+    } catch (e) {
+      console.warn("恢复截图监听失败:", e);
+    }
+  }
+  if (config.raidLogIntent && !raid.enabled) {
+    try {
+      const h = await loadDirHandle("eftLogsDir");
+      if (h && (await h.queryPermission({ mode: "read" })) === "granted") await raid.startWatching(h);
+    } catch (e) {
+      console.warn("恢复日志监听失败:", e);
+    }
+  }
+}
+void resumeWatching();
 
 /** 主题类与主题色 CSS 变量挂到 documentElement，全局样式和 naive-ui 主题都由此驱动 */
 watch(
@@ -176,6 +258,86 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
               >{{ config.primaryColor === c.value ? "✓" : "" }}</button>
             </div>
           </div>
+          <div class="settings-row">
+            <span>截图目录</span>
+            <NSpace align="center" :size="8">
+              <span v-if="track.enabled" class="hint-ok">监听中：{{ track.dirName }}</span>
+              <NButton size="small" @click="selectTrackDir(track.enabled)">
+                {{ track.enabled ? "重新选择" : "选择文件夹" }}
+              </NButton>
+              <NButton v-if="track.enabled" size="small" @click="stopTrack">停止</NButton>
+            </NSpace>
+          </div>
+          <div class="settings-hint">
+            监听后，游戏内截图会自动在地图页标记玩家位置与朝向（仅 Chrome / Edge）。
+            截图目录默认为「文档\Escape from Tarkov\Screenshots」，可在 启动器 → 设置 → 截图 中确认。
+            <div v-if="trackErr" class="hint-err">{{ trackErr }}</div>
+          </div>
+          <div class="settings-row">
+            <span>Logs 目录</span>
+            <NSpace align="center" :size="8">
+              <span v-if="raid.enabled" class="hint-ok">监听中：{{ raid.dirName }}</span>
+              <NButton size="small" @click="selectRaidDir(raid.enabled)">
+                {{ raid.enabled ? "重新选择" : "选择文件夹" }}
+              </NButton>
+              <NButton v-if="raid.enabled" size="small" @click="stopRaid">停止</NButton>
+            </NSpace>
+          </div>
+          <div class="settings-hint">
+            监听后，可从日志检测进入战局的地图（线上 / PVE / 训练均支持）。
+            Logs 目录在 启动器 → 设置 → 日志 查看，形如 D:\Games\Escape from Tarkov\Logs。
+            <div v-if="raidErr" class="hint-err">{{ raidErr }}</div>
+          </div>
+          <div class="settings-row">
+            <span>进战局自动切图</span>
+            <NTooltip trigger="hover" :disabled="raid.enabled">
+              <template #trigger>
+                <span class="switch-wrap" :class="{ off: !raid.enabled }">
+                  <NSwitch
+                    :value="config.autoMapLog"
+                    :disabled="!raid.enabled"
+                    @update:value="onAutoMapLog"
+                  />
+                </span>
+              </template>
+              需要先选择 Logs 目录开始监听
+            </NTooltip>
+          </div>
+          <div class="settings-hint">
+            检测到进入战局时自动把地图页切到对应地图；只在新进战局时切换，不干扰手动切图。
+          </div>
+          <div class="settings-row">
+            <span>截图跟随切图</span>
+            <NTooltip trigger="hover" :disabled="track.enabled">
+              <template #trigger>
+                <span class="switch-wrap" :class="{ off: !track.enabled }">
+                  <NSwitch
+                    :value="config.autoMapScreenshot"
+                    :disabled="!track.enabled"
+                    @update:value="onAutoMapScreenshot"
+                  />
+                </span>
+              </template>
+              需要先选择截图目录开始监听
+            </NTooltip>
+          </div>
+          <div class="settings-hint">截图位置落在其他地图时自动切换过去；关闭时仅提示。</div>
+          <div class="settings-row">
+            <span>截图视角跟随</span>
+            <NTooltip trigger="hover" :disabled="track.enabled">
+              <template #trigger>
+                <span class="switch-wrap" :class="{ off: !track.enabled }">
+                  <NSwitch
+                    :value="config.followScreenshot"
+                    :disabled="!track.enabled"
+                    @update:value="onFollowScreenshot"
+                  />
+                </span>
+              </template>
+              需要先选择截图目录开始监听
+            </NTooltip>
+          </div>
+          <div class="settings-hint">新截图时视角自动居中到玩家位置，缩放为 4 倍左右。</div>
         </NModal>
       </NNotificationProvider>
     </NMessageProvider>
@@ -339,6 +501,38 @@ a:hover {
 
 .settings-row:last-child {
   margin-bottom: 0;
+}
+
+.settings-hint {
+  margin: -8px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  opacity: 0.65;
+}
+
+.settings-hint .hint-ok {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.settings-hint .hint-err {
+  opacity: 1;
+  color: #d03050;
+}
+
+.settings-hint .hint-link {
+  cursor: pointer;
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+.switch-wrap {
+  display: inline-flex;
+}
+
+.switch-wrap.off {
+  cursor: not-allowed;
 }
 
 .color-presets {

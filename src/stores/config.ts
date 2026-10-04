@@ -28,6 +28,16 @@ interface Persisted {
   mapMarkersOff?: string[];
   theme?: string;
   primaryColor?: string;
+  /** 截图目录监听（意向；浏览器重启后需重新授权） */
+  trackIntent?: boolean;
+  /** Logs 目录监听（意向；同上） */
+  raidLogIntent?: boolean;
+  /** 日志检测到进战局时自动切换地图（默认开） */
+  autoMapLog?: boolean;
+  /** 截图位置在其他地图时自动跟随切换（默认开） */
+  autoMapScreenshot?: boolean;
+  /** 新截图时视角自动居中到玩家位置（默认开，缩放限制 3~4） */
+  followScreenshot?: boolean;
 }
 
 export const DEFAULT_PRIMARY = "#63e2b7";
@@ -55,6 +65,11 @@ export const useConfigStore = defineStore("config", {
       /** null 表示使用默认列 */
       columns: null as string[] | null,
       ...(p.columns?.length ? { columns: p.columns } : {}),
+      trackIntent: p.trackIntent === true,
+      raidLogIntent: p.raidLogIntent === true,
+      autoMapLog: p.autoMapLog !== false,
+      autoMapScreenshot: p.autoMapScreenshot !== false,
+      followScreenshot: p.followScreenshot !== false,
     };
   },
   actions: {
@@ -75,6 +90,11 @@ export const useConfigStore = defineStore("config", {
         favorites: [...this.favorites],
         theme: this.theme,
         primaryColor: this.primaryColor,
+        trackIntent: this.trackIntent,
+        raidLogIntent: this.raidLogIntent,
+        autoMapLog: this.autoMapLog,
+        autoMapScreenshot: this.autoMapScreenshot,
+        followScreenshot: this.followScreenshot,
       };
       if (this.columns) data.columns = this.columns;
       if (this.mapMarkersOff) data.mapMarkersOff = [...this.mapMarkersOff];
