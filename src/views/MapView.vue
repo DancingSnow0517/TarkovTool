@@ -1471,7 +1471,7 @@ onBeforeUnmount(() => {
         </button>
         <template v-if="syncMode">
           <span class="sync-badge" :class="sync.clientStatus" :title="sync.clientHint">
-            {{ syncStatusText }}
+            {{ sync.clientHint || syncStatusText }}
           </span>
           <button class="track-btn" title="断开位置同步" @click="disconnectSync">断开</button>
         </template>
