@@ -1,17 +1,8 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from "vue";
-import {
-  NButton,
-  NDataTable,
-  NInput,
-  NModal,
-  NSpace,
-  NSpin,
-  NText,
-  useMessage,
-  type DataTableColumns,
-} from "naive-ui";
+import { computed, onMounted, ref, watch } from "vue";
+import { NButton, NInput, NModal, NSpace, NSpin, useMessage } from "naive-ui";
 import ColumnsModal from "@/components/ColumnsModal.vue";
+import LoadMore from "@/components/LoadMore.vue";
 import { fetchJson } from "@/api/client";
 import type { PricePoint } from "@/api/types";
 import { useConfigStore } from "@/stores/config";
@@ -26,7 +17,6 @@ import {
   type ItemRow,
 } from "@/utils/deals";
 import { fmtPrice, fmtSignedPct } from "@/utils/format";
-import { renderItemName } from "@/utils/item-cell";
 import { itemDetails, tasksNeedingItem, traderPrices } from "@/utils/item-detail";
 
 const config = useConfigStore();
@@ -71,6 +61,23 @@ const filtered = computed(() => {
   return rows.value.filter((r) => matchRow(r, q));
 });
 
+/* ---- 无限滚动：滚动到底增量加载 ---- */
+
+const PAGE_SIZE = 60;
+const visibleCount = ref(PAGE_SIZE);
+const visibleRows = computed(() => filtered.value.slice(0, visibleCount.value));
+const hasMore = computed(() => visibleCount.value < filtered.value.length);
+
+watch(query, () => {
+  visibleCount.value = PAGE_SIZE;
+});
+
+function loadMore() {
+  visibleCount.value += PAGE_SIZE;
+}
+
+/* ---- 卡片字段（沿用列设置的字段选择） ---- */
+
 const activeKeys = computed<ItemColumnKey[]>(() => {
   const valid = new Set<string>(ITEM_COLUMNS.map((c) => c.key));
   return (config.columns ?? DEFAULT_ITEM_COLUMNS).filter((k): k is ItemColumnKey => valid.has(k));
@@ -78,19 +85,7 @@ const activeKeys = computed<ItemColumnKey[]>(() => {
 
 const columnLabels = new Map<string, string>(ITEM_COLUMNS.map((c) => [c.key, c.label]));
 
-const columnWidths: Record<ItemColumnKey, number> = {
-  flea: 130,
-  avg24h: 130,
-  low24h: 130,
-  high24h: 130,
-  change48h: 100,
-  offers: 90,
-  trader: 200,
-  flea_level: 90,
-  base: 130,
-};
-
-function renderCell(key: ItemColumnKey, row: ItemRow) {
+function cellText(key: ItemColumnKey, row: ItemRow): string {
   switch (key) {
     case "flea":
     case "avg24h":
@@ -98,11 +93,8 @@ function renderCell(key: ItemColumnKey, row: ItemRow) {
     case "high24h":
     case "base":
       return fmtPrice(row[key]);
-    case "change48h": {
-      const v = row.change48h;
-      if (v == null) return "-";
-      return h(NText, { type: v >= 0 ? "success" : "error" }, () => fmtSignedPct(v));
-    }
+    case "change48h":
+      return row.change48h == null ? "-" : fmtSignedPct(row.change48h);
     case "offers":
       return row.offers == null ? "-" : String(row.offers);
     case "trader":
@@ -112,40 +104,15 @@ function renderCell(key: ItemColumnKey, row: ItemRow) {
   }
 }
 
-const columns = computed<DataTableColumns<ItemRow>>(() => [
-  {
-    title: "★",
-    key: "fav",
-    width: 50,
-    render: (row) =>
-      h(
-        "span",
-        {
-          style: "cursor: pointer; color: #f0a020",
-          onClick: () => {
-            config.toggleFavorite(row.id);
-            sortItemRows(rows.value, config.favorites);
-          },
-        },
-        config.favorites.has(row.id) ? "★" : "☆",
-      ),
-  },
-  {
-    title: "物品",
-    key: "name",
-    width: 320,
-    resizable: true,
-    ellipsis: { tooltip: true },
-    render: renderItemName,
-  },
-  ...activeKeys.value.map((key) => ({
-    title: columnLabels.get(key),
-    key,
-    width: columnWidths[key],
-    resizable: true,
-    render: (row: ItemRow) => renderCell(key, row),
-  })),
-]);
+function cellTone(key: ItemColumnKey, row: ItemRow): string {
+  if (key !== "change48h" || row.change48h == null) return "";
+  return row.change48h >= 0 ? "tone-up" : "tone-down";
+}
+
+function toggleFav(row: ItemRow) {
+  config.toggleFavorite(row.id);
+  sortItemRows(rows.value, config.favorites);
+}
 
 /* ---- 跳蚤价格历史走势（手绘 SVG，不引图表库） ---- */
 
@@ -247,7 +214,7 @@ function onChartMove(e: MouseEvent) {
   hoverIdx.value = best;
 }
 
-/* ---- 行点击打开详情弹窗 ---- */
+/* ---- 点击卡片打开详情弹窗 ---- */
 
 async function openItem(row: ItemRow) {
   current.value = row;
@@ -276,13 +243,6 @@ async function openItem(row: ItemRow) {
   }
 }
 
-function rowProps(row: ItemRow) {
-  return {
-    style: "cursor: pointer",
-    onClick: () => openItem(row),
-  };
-}
-
 async function load(force = false) {
   loading.value = true;
   try {
@@ -291,6 +251,7 @@ async function load(force = false) {
     const list = Object.values(m.items).map((item) => makeItemRow(item, m));
     sortItemRows(list, config.favorites);
     rows.value = list;
+    visibleCount.value = PAGE_SIZE;
   } catch (e) {
     message.error(`加载市场数据失败：${e instanceof Error ? e.message : String(e)}`);
   } finally {
@@ -309,21 +270,36 @@ watch(() => [config.mode, config.lang], () => load());
         v-model:value="query"
         placeholder="搜索：中文 / 英文 / 拼音 / 首字母"
         clearable
-        style="width: 280px"
+        style="max-width: 280px"
       />
-      <NButton @click="showColumns = true">列设置</NButton>
+      <NButton @click="showColumns = true">字段设置</NButton>
       <NButton :loading="loading" @click="load(true)">刷新</NButton>
     </NSpace>
-    <NSpin :show="loading" class="table-wrap">
-      <NDataTable
-        :columns="columns"
-        :data="filtered"
-        :row-key="(row: ItemRow) => row.id"
-        :row-props="rowProps"
-        flex-height
-        virtual-scroll
-        size="small"
-      />
+    <NSpin :show="loading">
+      <div class="card-grid">
+        <div v-for="row in visibleRows" :key="row.id" class="item-card goods-card" @click="openItem(row)">
+          <img v-if="row.icon" :src="row.icon" :alt="row.name" class="goods-icon" loading="lazy" />
+          <div class="goods-body">
+            <div class="goods-title-row">
+              <a
+                class="goods-title"
+                :href="row.link"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click.stop
+              >{{ row.name }}</a>
+              <span class="goods-fav" @click.stop="toggleFav(row)">{{ config.favorites.has(row.id) ? "★" : "☆" }}</span>
+            </div>
+            <div class="goods-fields">
+              <template v-for="key in activeKeys" :key="key">
+                <span class="field-label">{{ columnLabels.get(key) }}</span>
+                <span class="field-value" :class="cellTone(key, row)">{{ cellText(key, row) }}</span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+      <LoadMore :loading="loading" :has-more="hasMore" @load="loadMore" />
     </NSpin>
     <ColumnsModal v-model:show="showColumns" />
     <NModal v-model:show="modal" style="width: min(720px, 92vw)">
@@ -460,28 +436,80 @@ watch(() => [config.mode, config.lang], () => load());
 .view {
   display: flex;
   flex-direction: column;
-  height: 100%;
   gap: 12px;
 }
 
-.table-wrap {
+/* 物品卡片：左大图标，右侧名称 + 字段 */
+.goods-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.goods-icon {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  flex: none;
+}
+
+.goods-body {
   flex: 1;
-  min-height: 0;
+  min-width: 0;
 }
 
-.table-wrap :deep(.n-spin-content) {
-  height: 100%;
+.goods-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-/* flex-height 的表体 flex-basis: 0，表格根必须有确定高度，否则只剩表头 */
-.table-wrap :deep(.n-data-table) {
-  height: 100%;
+.goods-title {
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.goods-fav {
+  color: #f0a020;
+  cursor: pointer;
+  flex: none;
+  font-size: 16px;
+}
+
+.goods-fields {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 13px;
+}
+
+.field-label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.field-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.tone-up {
+  color: #63e2b7;
+}
+
+.tone-down {
+  color: #e88080;
 }
 
 .item-modal {
   position: relative;
-  background: #1f1f23;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px 24px;
   max-height: 82vh;
@@ -494,13 +522,13 @@ watch(() => [config.mode, config.lang], () => load());
   right: 12px;
   background: none;
   border: none;
-  color: #9d9d9d;
+  color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
 }
 
 .item-modal-close:hover {
-  color: #fff;
+  color: var(--text);
 }
 
 .item-modal-head {
@@ -524,11 +552,11 @@ watch(() => [config.mode, config.lang], () => load());
 
 .item-modal-meta {
   margin: 4px 0 0;
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 .item-modal-desc {
-  color: #c9c9c9;
+  color: var(--text);
   line-height: 1.6;
 }
 
@@ -552,7 +580,7 @@ watch(() => [config.mode, config.lang], () => load());
 }
 
 .trader-name {
-  color: #9d9d9d;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -573,17 +601,17 @@ watch(() => [config.mode, config.lang], () => load());
 
 .chart-range {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #9d9d9d;
+  color: var(--text-dim);
   font-size: 12px;
   padding: 2px 10px;
   cursor: pointer;
 }
 
 .chart-range.active {
-  color: #63e2b7;
-  border-color: #63e2b7;
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .chart-box {
@@ -597,17 +625,17 @@ watch(() => [config.mode, config.lang], () => load());
 }
 
 .grid-line {
-  stroke: rgba(255, 255, 255, 0.07);
+  stroke: var(--border);
   stroke-width: 1;
 }
 
 .axis-label {
-  fill: #9d9d9d;
+  fill: var(--text-dim);
   font-size: 11px;
 }
 
 .hover-line {
-  stroke: rgba(255, 255, 255, 0.35);
+  stroke: var(--text-dim);
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
@@ -615,8 +643,8 @@ watch(() => [config.mode, config.lang], () => load());
 .chart-tip {
   position: absolute;
   transform: translate(-50%, -100%);
-  background: rgba(16, 16, 20, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 12px;
@@ -626,15 +654,15 @@ watch(() => [config.mode, config.lang], () => load());
 }
 
 .chart-tip-date {
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 .chart-tip-min {
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 .chart-empty {
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 .detail-grid {
@@ -644,7 +672,7 @@ watch(() => [config.mode, config.lang], () => load());
 }
 
 .detail-label {
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 /* 兴奋剂效果等多行值按 \n 换行渲染 */
@@ -660,7 +688,14 @@ watch(() => [config.mode, config.lang], () => load());
 }
 
 .need-action {
-  color: #9d9d9d;
+  color: var(--text-dim);
   font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .goods-icon {
+    width: 72px;
+    height: 72px;
+  }
 }
 </style>

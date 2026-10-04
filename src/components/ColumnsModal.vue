@@ -34,8 +34,8 @@ function save() {
   <NModal
     :show="show"
     preset="card"
-    title="列设置"
-    style="width: 420px"
+    title="字段设置"
+    style="width: min(420px, 92vw)"
     @update:show="onUpdateShow"
   >
     <NCheckboxGroup v-model:value="selected">

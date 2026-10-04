@@ -26,7 +26,11 @@ interface Persisted {
   columns?: string[];
   /** 被取消勾选的标记类别（缺省/空 = 全部启用；新增类别对老用户默认启用） */
   mapMarkersOff?: string[];
+  theme?: string;
+  primaryColor?: string;
 }
+
+export const DEFAULT_PRIMARY = "#63e2b7";
 
 function loadPersisted(): Persisted {
   try {
@@ -36,13 +40,15 @@ function loadPersisted(): Persisted {
   }
 }
 
-/** 用户配置：游戏模式、语言、收藏物品、物品列表列配置，持久化到 localStorage */
+/** 用户配置：游戏模式、语言、主题、收藏物品、物品列表列配置，持久化到 localStorage */
 export const useConfigStore = defineStore("config", {
   state: () => {
     const p = loadPersisted();
     return {
       mode: (GAME_MODES.some((m) => m.value === p.mode) ? p.mode : "regular") as GameMode,
       lang: p.lang && (LANGUAGES as readonly string[]).includes(p.lang) ? p.lang : "zh",
+      theme: (p.theme === "light" ? "light" : "dark") as "dark" | "light",
+      primaryColor: /^#[0-9a-fA-F]{6}$/.test(p.primaryColor ?? "") ? p.primaryColor! : DEFAULT_PRIMARY,
       favorites: new Set<string>(p.favorites ?? []),
       /** 被取消勾选的地图标记类别；null 表示全部启用（默认） */
       mapMarkersOff: (p.mapMarkersOff?.length ? new Set<string>(p.mapMarkersOff) : null) as Set<string> | null,
@@ -67,6 +73,8 @@ export const useConfigStore = defineStore("config", {
         mode: this.mode,
         lang: this.lang,
         favorites: [...this.favorites],
+        theme: this.theme,
+        primaryColor: this.primaryColor,
       };
       if (this.columns) data.columns = this.columns;
       if (this.mapMarkersOff) data.mapMarkersOff = [...this.mapMarkersOff];

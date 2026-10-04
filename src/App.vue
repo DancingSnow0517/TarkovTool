@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
-import { SettingsOutlined } from "@vicons/material";
+import { MenuOutlined, SettingsOutlined } from "@vicons/material";
 import {
   darkTheme,
   dateZhCN,
   NButton,
   NConfigProvider,
+  NDrawer,
+  NDrawerContent,
   NIcon,
   NMenu,
   NMessageProvider,
@@ -15,17 +17,57 @@ import {
   NSelect,
   NSpace,
   zhCN,
+  type GlobalThemeOverrides,
   type MenuOption,
 } from "naive-ui";
 import type { MapData } from "@/api/types";
-import { GAME_MODES, LANGUAGES, useConfigStore } from "@/stores/config";
+import { DEFAULT_PRIMARY, GAME_MODES, LANGUAGES, useConfigStore } from "@/stores/config";
 import { useDataStore } from "@/stores/data";
+import { useNarrow } from "@/utils/breakpoint";
+import { primaryVariants } from "@/utils/color";
 
 const route = useRoute();
 const config = useConfigStore();
 const data = useDataStore();
+const narrow = useNarrow();
 
 const settings = ref(false);
+const drawer = ref(false);
+
+/** 主题类与主题色 CSS 变量挂到 documentElement，全局样式和 naive-ui 主题都由此驱动 */
+watch(
+  () => config.theme,
+  (theme) => {
+    document.documentElement.classList.toggle("theme-light", theme === "light");
+    document.documentElement.classList.toggle("theme-dark", theme === "dark");
+  },
+  { immediate: true },
+);
+watch(
+  () => config.primaryColor,
+  (color) => document.documentElement.style.setProperty("--accent", color),
+  { immediate: true },
+);
+
+const naiveTheme = computed(() => (config.theme === "dark" ? darkTheme : null));
+const themeOverrides = computed<GlobalThemeOverrides>(() => ({
+  common: primaryVariants(config.primaryColor),
+}));
+
+/** 预设主题色 */
+const PRIMARY_PRESETS = [
+  { label: "绿", value: DEFAULT_PRIMARY },
+  { label: "橙", value: "#f0a020" },
+  { label: "蓝", value: "#2080f0" },
+  { label: "紫", value: "#8b5cf6" },
+  { label: "红", value: "#d03050" },
+  { label: "青", value: "#14b8a6" },
+];
+
+const themeOptions = [
+  { label: "暗色", value: "dark" },
+  { label: "亮色", value: "light" },
+];
 
 /** 地图菜单数据：maps.json 的地图列表 + 按当前模式/语言的本地化名称 */
 const maps = ref<MapData[]>([]);
@@ -75,24 +117,38 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
 </script>
 
 <template>
-  <NConfigProvider :theme="darkTheme" :locale="zhCN" :date-locale="dateZhCN">
+  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
     <NMessageProvider>
       <NNotificationProvider>
         <div class="app-shell">
           <header class="app-header">
-            <NSpace align="center" justify="space-between">
-              <NMenu :value="menuValue" mode="horizontal" :options="menuOptions" />
-              <NButton quaternary circle title="设置" @click="settings = true">
-                <template #icon>
-                  <NIcon :size="20"><SettingsOutlined /></NIcon>
-                </template>
-              </NButton>
-            </NSpace>
+            <div class="header-inner">
+              <NSpace align="center" justify="space-between" :wrap="false">
+                <NButton v-if="narrow" quaternary circle title="菜单" @click="drawer = true">
+                  <template #icon>
+                    <NIcon :size="22"><MenuOutlined /></NIcon>
+                  </template>
+                </NButton>
+                <NMenu v-else :value="menuValue" mode="horizontal" :options="menuOptions" />
+                <NButton quaternary circle title="设置" @click="settings = true">
+                  <template #icon>
+                    <NIcon :size="20"><SettingsOutlined /></NIcon>
+                  </template>
+                </NButton>
+              </NSpace>
+            </div>
           </header>
           <main class="app-main">
-            <RouterView />
+            <div class="main-inner">
+              <RouterView />
+            </div>
           </main>
         </div>
+        <NDrawer v-model:show="drawer" placement="left" :width="240">
+          <NDrawerContent body-content-style="padding: 8px 0">
+            <NMenu :value="menuValue" :options="menuOptions" @update:value="drawer = false" />
+          </NDrawerContent>
+        </NDrawer>
         <NModal v-model:show="settings" preset="card" title="设置" style="width: min(420px, 92vw)">
           <div class="settings-row">
             <span>游戏模式</span>
@@ -101,6 +157,24 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
           <div class="settings-row">
             <span>语言</span>
             <NSelect v-model:value="config.lang" :options="langOptions" style="width: 230px" />
+          </div>
+          <div class="settings-row">
+            <span>主题</span>
+            <NSelect v-model:value="config.theme" :options="themeOptions" style="width: 230px" />
+          </div>
+          <div class="settings-row">
+            <span>主题色</span>
+            <div class="color-presets">
+              <button
+                v-for="c in PRIMARY_PRESETS"
+                :key="c.value"
+                class="color-swatch"
+                :class="{ active: config.primaryColor === c.value }"
+                :style="{ background: c.value }"
+                :title="c.label"
+                @click="config.primaryColor = c.value"
+              >{{ config.primaryColor === c.value ? "✓" : "" }}</button>
+            </div>
           </div>
         </NModal>
       </NNotificationProvider>
@@ -116,12 +190,30 @@ body,
   height: 100%;
 }
 
-body {
-  background: #101014;
-  color: rgba(255, 255, 255, 0.82);
+html.theme-dark {
+  --bg: #101014;
+  --bg-card: #1f1f23;
+  --border: rgba(255, 255, 255, 0.09);
+  --text: rgba(255, 255, 255, 0.82);
+  --text-dim: #9d9d9d;
+  --card-bg-subtle: rgba(255, 255, 255, 0.04);
 }
 
-/* 细滚动条，与表格风格一致 */
+html.theme-light {
+  --bg: #f2f3f5;
+  --bg-card: #ffffff;
+  --border: rgba(0, 0, 0, 0.1);
+  --text: rgba(0, 0, 0, 0.82);
+  --text-dim: #6b6b6b;
+  --card-bg-subtle: rgba(0, 0, 0, 0.03);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 细滚动条，与列表风格一致 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -132,46 +224,26 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(128, 128, 128, 0.35);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(128, 128, 128, 0.55);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
 }
 
 a {
-  color: #63e2b7;
+  color: var(--accent);
   text-decoration: none;
 }
 
 a:hover {
   text-decoration: underline;
-}
-
-.item-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  vertical-align: middle;
-}
-
-.item-icon {
-  height: 48px;
-  width: auto;
-  flex: none;
-}
-
-.item-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .app-shell {
@@ -183,7 +255,15 @@ a:hover {
 .app-header {
   flex: none;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 宽屏下内容居中、左右留白；导航与正文同宽对齐 */
+.header-inner,
+.main-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .app-main {
@@ -191,6 +271,53 @@ a:hover {
   min-height: 0;
   padding: 16px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  /* 卡片列表随页面整体滚动 */
+  overflow-y: auto;
+}
+
+.main-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 6px 8px;
+  }
+
+  .app-main {
+    padding: 8px;
+  }
+}
+
+/* 卡片网格：列表页共用 */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.item-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.item-card:hover {
+  border-color: var(--accent);
 }
 
 .settings-row {
@@ -202,5 +329,26 @@ a:hover {
 
 .settings-row:last-child {
   margin-bottom: 0;
+}
+
+.color-presets {
+  display: flex;
+  gap: 8px;
+}
+
+.color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+
+.color-swatch.active {
+  border-color: var(--text);
 }
 </style>

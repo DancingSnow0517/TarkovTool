@@ -1,21 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
-import {
-  NButton,
-  NDataTable,
-  NInput,
-  NModal,
-  NSpace,
-  NSpin,
-  useMessage,
-  type DataTableColumns,
-} from "naive-ui";
+import { NButton, NInput, NModal, NSpace, NSpin, useMessage } from "naive-ui";
+import LoadMore from "@/components/LoadMore.vue";
 import type { TaskObjective } from "@/api/types";
 import { useConfigStore } from "@/stores/config";
 import { useDataStore, type MarketData, type TaskData } from "@/stores/data";
 import { kappaTaskIds, makeTaskRow, matchRow, resolveRewards, taskMapLinks, translate, type TaskRow } from "@/utils/deals";
-import { renderItemName } from "@/utils/item-cell";
 
 const config = useConfigStore();
 const data = useDataStore();
@@ -35,6 +26,21 @@ const filtered = computed(() => {
   return rows.value.filter((r) => matchRow(r, q));
 });
 
+/* ---- 无限滚动：滚动到底增量加载 ---- */
+
+const PAGE_SIZE = 60;
+const visibleCount = ref(PAGE_SIZE);
+const visibleRows = computed(() => filtered.value.slice(0, visibleCount.value));
+const hasMore = computed(() => visibleCount.value < filtered.value.length);
+
+watch(query, () => {
+  visibleCount.value = PAGE_SIZE;
+});
+
+function loadMore() {
+  visibleCount.value += PAGE_SIZE;
+}
+
 const mapLinks = computed(() => {
   if (!current.value || !taskData.value) return [];
   return taskMapLinks(current.value.task, taskData.value);
@@ -53,45 +59,14 @@ const hasRewards = computed(() => {
   );
 });
 
-const columns: DataTableColumns<TaskRow> = [
-  {
-    title: "任务",
-    key: "name",
-    width: 320,
-    resizable: true,
-    ellipsis: { tooltip: true },
-    render: (row) =>
-      renderItemName({ name: row.name, link: `https://tarkov.dev/task/${row.norm}`, icon: row.icon }),
-  },
-  { title: "商人", key: "trader", width: 140, resizable: true },
-  { title: "地图", key: "map", width: 140, resizable: true },
-  {
-    title: "等级",
-    key: "level",
-    width: 80,
-    render: (row) => (row.level ? `Lv.${row.level}` : "-"),
-  },
-  {
-    title: "Kappa",
-    key: "kappa",
-    width: 70,
-    render: (row) => (row.kappa ? "✔" : ""),
-  },
-];
-
 function objectiveText(ob: TaskObjective): string {
   const text = translate(ob.description ?? "", taskData.value?.tr ?? {});
   return ob.optional ? `${text} (可选)` : text;
 }
 
-function rowProps(row: TaskRow) {
-  return {
-    style: "cursor: pointer",
-    onClick: () => {
-      current.value = row;
-      modal.value = true;
-    },
-  };
+function openTask(row: TaskRow) {
+  current.value = row;
+  modal.value = true;
 }
 
 async function load(force = false) {
@@ -111,6 +86,7 @@ async function load(force = false) {
     });
     list.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
     rows.value = list;
+    visibleCount.value = PAGE_SIZE;
   } catch (e) {
     message.error(`加载任务数据失败：${e instanceof Error ? e.message : String(e)}`);
   } finally {
@@ -129,19 +105,35 @@ watch(() => [config.mode, config.lang], () => load());
         v-model:value="query"
         placeholder="搜索：中文 / 英文 / 拼音 / 首字母"
         clearable
-        style="width: 280px"
+        style="max-width: 280px"
       />
       <NButton :loading="loading" @click="load(true)">刷新</NButton>
     </NSpace>
-    <NSpin :show="loading" class="table-wrap">
-      <NDataTable
-        :columns="columns"
-        :data="filtered"
-        :row-key="(row: TaskRow) => row.id"
-        :row-props="rowProps"
-        flex-height
-        size="small"
-      />
+    <NSpin :show="loading">
+      <div class="card-grid">
+        <div v-for="row in visibleRows" :key="row.id" class="item-card task-card" @click="openTask(row)">
+          <img v-if="row.icon" :src="row.icon" :alt="row.name" class="task-icon" loading="lazy" />
+          <div class="task-body">
+            <a
+              class="task-title"
+              :href="`https://tarkov.dev/task/${row.norm}`"
+              target="_blank"
+              rel="noopener noreferrer"
+              @click.stop
+            >{{ row.name }}</a>
+            <div class="task-fields">
+              <span class="field-label">商人</span>
+              <span>{{ row.trader || "-" }}</span>
+              <span class="field-label">地图</span>
+              <span>{{ row.map || "-" }}</span>
+              <span class="field-label">等级</span>
+              <span>{{ row.level ? `Lv.${row.level}` : "-" }}</span>
+            </div>
+          </div>
+          <span v-if="row.kappa" class="task-kappa" title="需要 3x4 (Kappa)">Kappa ✔</span>
+        </div>
+      </div>
+      <LoadMore :loading="loading" :has-more="hasMore" @load="loadMore" />
     </NSpin>
     <NModal v-model:show="modal" style="width: min(640px, 92vw)">
       <div v-if="current" class="task-modal">
@@ -209,28 +201,66 @@ watch(() => [config.mode, config.lang], () => load());
 .view {
   display: flex;
   flex-direction: column;
-  height: 100%;
   gap: 12px;
 }
 
-.table-wrap {
+.task-card {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.task-icon {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+}
+
+.task-body {
   flex: 1;
-  min-height: 0;
+  min-width: 0;
 }
 
-.table-wrap :deep(.n-spin-content) {
-  height: 100%;
+.task-title {
+  display: inline-block;
+  max-width: 100%;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
 }
 
-/* flex-height 的表体 flex-basis: 0，表格根必须有确定高度，否则只剩表头 */
-.table-wrap :deep(.n-data-table) {
-  height: 100%;
+.task-kappa {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-fields {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 13px;
+}
+
+.field-label {
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .task-modal {
   position: relative;
-  background: #1f1f23;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px 24px;
   max-height: 82vh;
@@ -243,13 +273,13 @@ watch(() => [config.mode, config.lang], () => load());
   right: 12px;
   background: none;
   border: none;
-  color: #9d9d9d;
+  color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
 }
 
 .task-modal-close:hover {
-  color: #fff;
+  color: var(--text);
 }
 
 .task-modal-title {
@@ -267,7 +297,7 @@ watch(() => [config.mode, config.lang], () => load());
 
 .task-modal-meta {
   text-align: center;
-  color: #9d9d9d;
+  color: var(--text-dim);
 }
 
 .task-rewards li {

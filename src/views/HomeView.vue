@@ -277,7 +277,7 @@ onBeforeUnmount(() => window.clearInterval(timer));
           @click="toggleNotify"
         >
           <template #icon>
-            <NIcon :size="20" :color="notifyOn ? '#63e2b7' : undefined">
+            <NIcon :size="20" :color="notifyOn ? config.primaryColor : undefined">
               <NotificationsOutlined v-if="notifyOn" />
               <NotificationsOffOutlined v-else />
             </NIcon>
@@ -308,20 +308,26 @@ onBeforeUnmount(() => window.clearInterval(timer));
   padding-top: 48px;
 }
 
+@media (max-width: 768px) {
+  .home {
+    padding-top: 16px;
+  }
+}
+
 .game-time {
   width: min(1068px, 100%);
 }
 
 .clock-card {
-  padding: 32px 64px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 32px 16px;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--card-bg-subtle);
   text-align: center;
 }
 
 .clock-value {
-  font-size: 72px;
+  font-size: clamp(34px, 8vw, 72px);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 2px;
@@ -329,9 +335,9 @@ onBeforeUnmount(() => window.clearInterval(timer));
 }
 
 .clock-sep {
-  margin: 0 20px;
-  font-size: 56px;
-  color: rgba(255, 255, 255, 0.35);
+  margin: 0 12px;
+  font-size: clamp(28px, 6vw, 56px);
+  color: var(--text-dim);
 }
 
 .restock {
@@ -341,16 +347,16 @@ onBeforeUnmount(() => window.clearInterval(timer));
 .restock-card {
   position: relative;
   padding: 24px 24px 32px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--card-bg-subtle);
 }
 
 .restock-title {
   margin: 0 0 20px;
   text-align: center;
   font-size: 18px;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
 }
 
 .notify-btn {
@@ -381,7 +387,7 @@ onBeforeUnmount(() => window.clearInterval(timer));
   width: 96px;
   height: 96px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--card-bg-subtle);
 }
 
 .trader-name {
@@ -397,6 +403,21 @@ onBeforeUnmount(() => window.clearInterval(timer));
   margin-top: 6px;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
-  color: #63e2b7;
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .trader-grid {
+    gap: 12px;
+  }
+
+  .trader-card {
+    width: 84px;
+  }
+
+  .trader-avatar {
+    width: 72px;
+    height: 72px;
+  }
 }
 </style>
