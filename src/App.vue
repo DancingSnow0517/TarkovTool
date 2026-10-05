@@ -206,12 +206,18 @@ const langOptions = LANGUAGES.map((l) => ({ label: l, value: l }));
           <header class="app-header">
             <div class="header-inner">
               <div class="header-row">
-                <NButton v-if="narrow" quaternary circle title="菜单" @click="drawer = true">
-                  <template #icon>
-                    <NIcon :size="22"><MenuOutlined /></NIcon>
-                  </template>
-                </NButton>
-                <NMenu v-else :value="menuValue" mode="horizontal" :options="menuOptions" />
+                <div class="header-left">
+                  <NButton v-if="narrow" quaternary circle title="菜单" @click="drawer = true">
+                    <template #icon>
+                      <NIcon :size="22"><MenuOutlined /></NIcon>
+                    </template>
+                  </NButton>
+                  <RouterLink to="/" class="brand" title="Tarkov 工具箱">
+                    <img src="/icons/pwa-192.png" alt="Tarkov 工具箱" class="brand-icon" />
+                    <span class="brand-name">Tarkov 工具箱</span>
+                  </RouterLink>
+                  <NMenu v-if="!narrow" :value="menuValue" mode="horizontal" :options="menuOptions" />
+                </div>
                 <NSpace align="center" :size="4" :wrap="false">
                   <NPopover trigger="click" placement="bottom" :show-arrow="false">
                     <template #trigger>
@@ -524,6 +530,34 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.brand-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.brand-name {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .settings-row:last-child {
