@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { NButton, NInput, NModal, NSpace, NSpin, useMessage } from "naive-ui";
 import ColumnsModal from "@/components/ColumnsModal.vue";
+import CommentSection from "@/components/CommentSection.vue";
 import LoadMore from "@/components/LoadMore.vue";
 import { fetchJson } from "@/api/client";
 import type { PricePoint } from "@/api/types";
@@ -427,6 +428,7 @@ watch(() => [config.mode, config.lang], () => load());
             </li>
           </ul>
         </template>
+        <CommentSection :path="`/item/${current.id}`" />
       </div>
     </NModal>
   </div>
