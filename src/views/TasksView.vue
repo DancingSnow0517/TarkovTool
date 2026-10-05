@@ -210,13 +210,13 @@ watch(() => [config.mode, config.lang], () => load());
   position: relative;
   display: flex;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
 }
 
+/* 任务图片是长方形：固定宽度、高度自适应，上下居中 */
 .task-icon {
-  width: 72px;
-  height: 72px;
-  object-fit: cover;
+  width: 120px;
+  height: auto;
   border-radius: 6px;
   flex: none;
 }

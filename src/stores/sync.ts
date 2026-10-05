@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { useTrackStore } from "@/stores/track";
 import type { TrackPoint } from "@/stores/track";
+import { useMapTasksStore } from "@/stores/mapTasks";
 
 /** PC → 移动端位置同步：WebRTC DataChannel 局域网 P2P 直连，
  * 仅 SDP 握手经过公共信令服务（ntfy.sh，纯 HTTPS：SSE 订阅 + POST 发布，代理/防火墙友好）。
@@ -18,11 +19,13 @@ import type { TrackPoint } from "@/stores/track";
 
 export type SyncMsg =
   /** 连接建立后 host 立即下发的全量快照 */
-  | { type: "state"; map: string; points: TrackPoint[] }
+  | { type: "state"; map: string; points: TrackPoint[]; tasks: string[]; done: string[] }
   /** 新截图点增量广播 */
   | { type: "point"; point: TrackPoint }
   /** host 地图切换（手动或日志自动切图） */
-  | { type: "map"; map: string };
+  | { type: "map"; map: string }
+  /** 任务列表 + 目标完成状态全量（host→client 广播 / client→host 回传，接收方整体替换） */
+  | { type: "tracked"; tasks: string[]; done: string[] };
 
 export type ClientStatus = "off" | "connecting" | "connected" | "reconnecting";
 
@@ -151,8 +154,34 @@ export const useSyncStore = defineStore("sync", {
             (p) => p.dc.readyState === "open",
           ).length;
           const track = useTrackStore();
-          const snap: SyncMsg = { type: "state", map: hostMap, points: track.points };
+          const mapTasks = useMapTasksStore();
+          const snap: SyncMsg = {
+            type: "state",
+            map: hostMap,
+            points: track.points,
+            tasks: mapTasks.ids,
+            done: mapTasks.done,
+          };
           dc.send(JSON.stringify(snap));
+        };
+        // client 回传（任务列表 + 完成状态）：应用到本地并转发给其他已连接客户端
+        dc.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data as string) as SyncMsg;
+            if (msg.type !== "tracked") return;
+            const mapTasks = useMapTasksStore();
+            mapTasks.applyRemote(msg.tasks, msg.done);
+            const fwd = JSON.stringify({
+              type: "tracked",
+              tasks: mapTasks.ids,
+              done: mapTasks.done,
+            } satisfies SyncMsg);
+            for (const [otherCid, p] of hostPeers) {
+              if (otherCid !== cid && p.dc.readyState === "open") p.dc.send(fwd);
+            }
+          } catch (err) {
+            console.error("同步消息解析失败:", err);
+          }
         };
         const drop = () => {
           hostPeers.delete(cid);
@@ -196,6 +225,18 @@ export const useSyncStore = defineStore("sync", {
       const msg = JSON.stringify({ type: "point", point: p } satisfies SyncMsg);
       for (const { dc } of hostPeers.values()) {
         if (dc.readyState === "open") dc.send(msg);
+      }
+    },
+
+    /** 任务列表 + 完成状态变更：host 广播给所有 client；client 回传给 host（host 收到后再转发给其他 client） */
+    notifyTracked(tasks: string[], done: string[]) {
+      const msg = JSON.stringify({ type: "tracked", tasks, done } satisfies SyncMsg);
+      if (this.hosting) {
+        for (const { dc } of hostPeers.values()) {
+          if (dc.readyState === "open") dc.send(msg);
+        }
+      } else if (clientDc?.readyState === "open") {
+        clientDc.send(msg);
       }
     },
 
@@ -313,6 +354,7 @@ export const useSyncStore = defineStore("sync", {
       const track = useTrackStore();
       if (msg.type === "state") {
         track.applyRemoteState(msg.points);
+        useMapTasksStore().applyRemote(msg.tasks, msg.done);
         this.remoteMap = msg.map;
         this.remoteMapAt = Date.now();
       } else if (msg.type === "point") {
@@ -320,6 +362,8 @@ export const useSyncStore = defineStore("sync", {
       } else if (msg.type === "map") {
         this.remoteMap = msg.map;
         this.remoteMapAt = Date.now();
+      } else if (msg.type === "tracked") {
+        useMapTasksStore().applyRemote(msg.tasks, msg.done);
       }
     },
 

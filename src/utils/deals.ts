@@ -199,33 +199,28 @@ export function makeTaskRow(task: Task, td: TaskData, market: MarketData): TaskR
 export interface TaskMapLink {
   mapName: string;
   /** 站内地图页 query 参数（模式/语言由地图页跟随导航栏配置，不随链接携带） */
-  query: { map: string; q: string; task: string };
+  query: { map: string; task: string };
 }
 
-/** 汇总任务所有目标的坐标点，按地图分组：每张地图一条链接，q 携带该图全部点位 */
+/** 任务涉及的地图分组：每张地图一条链接；只传任务 id，区域/物品点位由地图页自行推出 */
 export function taskMapLinks(task: Task, td: TaskData): TaskMapLink[] {
-  const byMap = new Map<string, { key: string; qids: string[] }>();
-  const add = (mapId: string | undefined, qid: string) => {
-    const key = mapId ? td.mapKeys[mapId] : undefined;
-    if (!mapId || !key) return;
-    let entry = byMap.get(mapId);
-    if (!entry) {
-      entry = { key, qids: [] };
-      byMap.set(mapId, entry);
-    }
-    if (!entry.qids.includes(qid)) entry.qids.push(qid);
-  };
+  const mapIds = new Set<string>();
   for (const ob of task.objectives ?? []) {
-    for (const z of ob.zones ?? []) add(z.map, z.id);
-    const questItem = ob.questItem;
-    if (questItem) {
-      for (const loc of ob.possibleLocations ?? []) add(loc.map, questItem);
+    for (const z of ob.zones ?? []) {
+      if (z.map) mapIds.add(z.map);
+    }
+    if (ob.questItem) {
+      for (const loc of ob.possibleLocations ?? []) {
+        if (loc.map) mapIds.add(loc.map);
+      }
     }
   }
-  return [...byMap.entries()].map(([mapId, { key, qids }]) => ({
-    mapName: translate(`${mapId} Name`, td.mapTr),
-    query: { map: key, q: qids.join(","), task: task.id },
-  }));
+  return [...mapIds]
+    .filter((mapId) => td.mapKeys[mapId])
+    .map((mapId) => ({
+      mapName: translate(`${mapId} Name`, td.mapTr),
+      query: { map: td.mapKeys[mapId], task: task.id },
+    }));
 }
 
 /* ---- 任务奖励 ---- */

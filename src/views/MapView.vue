@@ -3,7 +3,7 @@
  * 模式/语言跟随导航栏下拉框（config store），不从 URL 读取。
  * 坐标系/投影与楼层分层逻辑移植自 the-hideout/tarkov-dev (src/pages/map/index.jsx)，
  * 页面行为对齐 web/map.js。 */
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { LocationQuery, LocationQueryValue } from "vue-router";
 import L from "leaflet";
@@ -16,8 +16,10 @@ import { useTrackStore } from "@/stores/track";
 import type { TrackPoint } from "@/stores/track";
 import { useRaidLogStore } from "@/stores/raidLog";
 import { useSyncStore } from "@/stores/sync";
+import { useMapTasksStore } from "@/stores/mapTasks";
 import SyncModal from "@/components/SyncModal.vue";
 import { MARKER_CATS, MARKER_GROUPS, SEASON_FILES_BY_ID, SEASON_FILE_IDS } from "@/utils/markers";
+import { pinyinIndex } from "@/utils/pinyin";
 import type {
   ApiMapMarkers,
   MapData,
@@ -37,6 +39,7 @@ const data = useDataStore();
 const track = useTrackStore();
 const raid = useRaidLogStore();
 const sync = useSyncStore();
+const mapTasks = useMapTasksStore();
 const message = useMessage();
 
 const mapEl = ref<HTMLDivElement>();
@@ -86,6 +89,7 @@ interface ZoneDef {
 }
 
 interface ObjectiveDef {
+  id?: string;
   description?: string;
   zones?: ZoneDef[] | null;
   questItem?: string | null;
@@ -96,6 +100,7 @@ interface TaskDef {
   id: string;
   name: string;
   normalizedName?: string;
+  taskImageLink?: string | null;
   objectives?: ObjectiveDef[];
 }
 
@@ -122,12 +127,14 @@ interface LabelVis {
 
 type LabelMarker = L.Marker & { _vis: LabelVis };
 
-type FocusLayer = L.Path & {
+type FocusLayer = (L.Path | L.FeatureGroup) & {
   _floor: MapLayer | null;
   _normal: L.PathOptions;
   _dim: L.PathOptions;
   _entries: ObjectiveEntry[];
-  // Path 基类类型未声明 getBounds，实际绘制的 Polygon/CircleMarker 都有
+  /** 任务列表绘制物记录所属任务 id（URL 聚焦绘制物为空） */
+  _taskId?: string;
+  // Path 基类类型未声明 getBounds；Polygon 自带，CircleMarker 由 circlePoint 补，多刷点组用 FeatureGroup（自带）
   getBounds(): L.LatLngBounds;
 };
 
@@ -167,7 +174,7 @@ let svgRoot: SVGElement | null = null; // 内联 SVG 的根节点（仅 SVG 底�
 let baseTileLayer: L.TileLayer | null = null; // 瓦片底图（仅瓦片底图）
 let floorOverlay: L.TileLayer | null = null; // 当前楼层的瓦片叠加层
 let activeFloor: MapLayer | null = null; // 当前楼层（null = 主层）
-let focusLayers: FocusLayer[] = []; // 聚焦绘制物，_floor 记录所属楼层
+let focusLayers: FocusLayer[] = []; // 聚焦绘制物，_floor 记录所属楼层（含 URL 聚焦与任务列表两种来源）
 let labelMarkers: LabelMarker[] = []; // 区域标签，_vis 记录楼层可见性
 let markerRecs: MarkerRec[] = []; // 撤离点/危险区标记
 let markerCounts: Record<string, number> = {}; // 各类别标记数量（面板只列出当前地图存在的类别）
@@ -620,6 +627,9 @@ let markerCollapsed = window.innerWidth <= 768;
 /** 楼层面板收起状态：同标记面板 */
 let floorCollapsed = window.innerWidth <= 768;
 
+/** 目标列表面板收起状态：同楼层面板 */
+let objCollapsed = window.innerWidth <= 768;
+
 /** 窄屏下点击面板外区域自动收起展开的面板（捕获阶段监听，避免地图拦截事件） */
 function collapsePanelsOnOutsideClick(e: MouseEvent) {
   if (window.innerWidth > 768) return;
@@ -629,6 +639,13 @@ function collapsePanelsOnOutsideClick(e: MouseEvent) {
     floorCollapsed = true;
     floorPanel.classList.add("collapsed");
     const toggle = floorPanel.querySelector(".floor-toggle");
+    if (toggle) toggle.textContent = "▶";
+  }
+  const objPanel = objPanelEl.value;
+  if (objPanel && !objPanel.hidden && !objCollapsed && !objPanel.contains(target)) {
+    objCollapsed = true;
+    objPanel.classList.add("collapsed");
+    const toggle = objPanel.querySelector(".obj-toggle");
     if (toggle) toggle.textContent = "▶";
   }
   const markerPanel = markerPanelEl.value;
@@ -740,7 +757,7 @@ function popupHtml(entries: ObjectiveEntry[], tr: TranslationMap, floor: MapLaye
 }
 
 function trackFocus(
-  layer: L.Path,
+  layer: L.Path | L.FeatureGroup,
   floor: MapLayer | null,
   normal: L.PathOptions,
   dim: L.PathOptions,
@@ -751,6 +768,20 @@ function trackFocus(
   fl._dim = dim;
   focusLayers.push(fl);
   return fl;
+}
+
+/** 任务物品刷点（红色圆点）。CircleMarker 没有 getBounds，补一个单点 bounds（聚焦/自适应要用） */
+function circlePoint(p: TaskPosition): L.CircleMarker {
+  const m = L.circleMarker(pos(p), {
+    radius: 6,
+    color: "#ff5252",
+    weight: 2,
+    fillColor: "#ff5252",
+    fillOpacity: 0.8,
+  });
+  (m as L.CircleMarker & { getBounds(): L.LatLngBounds }).getBounds = () =>
+    L.latLngBounds([m.getLatLng()]);
+  return m;
 }
 
 function ringContains(ring: L.LatLng[], latlng: L.LatLng): boolean {
@@ -771,7 +802,10 @@ function ringContains(ring: L.LatLng[], latlng: L.LatLng): boolean {
   return inside;
 }
 
-function layerContainsPoint(layer: L.Path, latlng: L.LatLng): boolean {
+function layerContainsPoint(layer: L.Path | L.FeatureGroup, latlng: L.LatLng): boolean {
+  if (layer instanceof L.FeatureGroup) {
+    return layer.getLayers().some((l) => layerContainsPoint(l as L.Path, latlng));
+  }
   if (layer instanceof L.CircleMarker) {
     const d = map!
       .latLngToLayerPoint(layer.getLatLng())
@@ -780,6 +814,39 @@ function layerContainsPoint(layer: L.Path, latlng: L.LatLng): boolean {
   }
   const ring = (layer as L.Polygon).getLatLngs()[0] as unknown as L.LatLng[];
   return ringContains(ring, latlng);
+}
+
+/** 聚焦图层上实际绑了气泡的对象：多刷点组（FeatureGroup）展开为各刷点，其余为图层自身 */
+function popupTargets(layer: FocusLayer): L.Layer[] {
+  return layer instanceof L.FeatureGroup ? layer.getLayers() : [layer as L.Layer];
+}
+
+/** 关闭全部聚焦图层的气泡（含多刷点组的子刷点） */
+function closeAllFocusPopups() {
+  for (const l of focusLayers) for (const t of popupTargets(l)) t.closePopup();
+}
+
+/** 弹出一组聚焦图层的气泡；与其他目标的气泡互相遮挡的只保留先打开的，
+ * 同组多刷点之间不去重（每个刷点都显示气泡） */
+function openLayerPopups(layers: FocusLayer[]) {
+  const keptRects: DOMRect[] = [];
+  for (const layer of layers) {
+    const ownRects: DOMRect[] = [];
+    for (const t of popupTargets(layer)) {
+      const popup = t.getPopup();
+      if (!popup) continue;
+      t.openPopup();
+      const el = popup.getElement();
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const overlap = keptRects.some(
+        (k) => !(r.right < k.left || r.left > k.right || r.bottom < k.top || r.top > k.bottom),
+      );
+      if (overlap) t.closePopup();
+      else ownRects.push(r);
+    }
+    keptRects.push(...ownRects);
+  }
 }
 
 function bindFocusPopup(
@@ -803,7 +870,7 @@ function bindFocusPopup(
     const stack = focusLayers.filter((l) => l.getPopup() && layerContainsPoint(l, e.latlng));
     const openIdx = stack.findIndex((l) => l.isPopupOpen());
     const next = openIdx >= 0 ? stack[(openIdx + 1) % stack.length] : layer;
-    for (const l of focusLayers) l.closePopup();
+    closeAllFocusPopups();
     next.openPopup();
     setFloor(next._floor || null);
   });
@@ -812,38 +879,90 @@ function bindFocusPopup(
 /* ---- 目标列表面板 ---- */
 
 function focusObjective(layer: FocusLayer, row: HTMLElement) {
-  // 单聚焦一个目标：切到所在楼层、缩放到该目标并弹出气泡
+  // 单聚焦一个目标：切到所在楼层、缩放到该目标（多刷点自适应到全部刷点）并弹出气泡
   objPanelEl.value
     ?.querySelectorAll(".obj-item.active")
     .forEach((el) => el.classList.remove("active"));
   row.classList.add("active");
-  for (const l of focusLayers) l.closePopup();
+  closeAllFocusPopups();
   setFloor(layer._floor || null);
   map!.fitBounds(layer.getBounds().pad(0.5), { maxZoom: mapData!.maxZoom, animate: false });
-  layer.openPopup();
+  openLayerPopups([layer]);
 }
 
 function buildObjectiveList(tr: TranslationMap) {
-  const objPanel = objPanelEl.value!;
-  const floorPanel = floorPanelEl.value!;
+  const objPanel = objPanelEl.value;
+  if (!objPanel) return;
   objPanel.innerHTML = "";
-  if (!focusLayers.length) return;
+  if (!focusLayers.length) {
+    objPanel.hidden = true;
+    return;
+  }
+  // 头部标题行：点击收起/展开（窄屏默认收起，跨地图重建保持状态）
+  const head = document.createElement("div");
+  head.className = "obj-head";
+  const headLabel = document.createElement("span");
+  headLabel.textContent = `目标 (${focusLayers.length})`;
+  const headToggle = document.createElement("span");
+  headToggle.className = "obj-toggle";
+  const syncToggle = () => {
+    headToggle.textContent = objCollapsed ? "▶" : "▾";
+  };
+  head.onclick = () => {
+    objCollapsed = !objCollapsed;
+    objPanel.classList.toggle("collapsed", objCollapsed);
+    syncToggle();
+  };
+  syncToggle();
+  head.append(headLabel, headToggle);
+  objPanel.appendChild(head);
+  objPanel.classList.toggle("collapsed", objCollapsed);
   for (const layer of focusLayers) {
     const row = document.createElement("div");
     row.className = "obj-item";
-    row.innerHTML = entryBodies(layer._entries, tr).join("<hr>");
+    // 完成勾选：同一绘制点位可能叠多个目标，一起勾选/取消（半选态）
+    const obIds = layer._entries.map((e) => e.ob.id).filter((x): x is string => !!x);
+    const doneCount = obIds.filter((id) => mapTasks.done.includes(id)).length;
+    const allDone = obIds.length > 0 && doneCount === obIds.length;
+    if (allDone) row.classList.add("done");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = allDone;
+    cb.indeterminate = doneCount > 0 && !allDone;
+    cb.title = "标记完成";
+    cb.onclick = (e) => {
+      e.stopPropagation();
+      mapTasks.setDone(obIds, !allDone);
+    };
+    row.appendChild(cb);
+    const body = document.createElement("div");
+    body.className = "obj-body";
+    body.innerHTML = entryBodies(layer._entries, tr).join("<hr>");
+    row.appendChild(body);
+    // 任务列表来源的行：✕ 从列表移除该任务（URL 聚焦的行不显示）
+    if (layer._taskId) {
+      const rm = document.createElement("span");
+      rm.className = "obj-remove";
+      rm.textContent = "✕";
+      rm.title = "从任务列表移除";
+      rm.onclick = (e) => {
+        e.stopPropagation();
+        mapTasks.remove(layer._taskId!);
+      };
+      row.appendChild(rm);
+    }
     row.onclick = () => focusObjective(layer, row);
     objPanel.appendChild(row);
   }
-  // 面板贴在楼层选择器下面（无楼层地图则贴缩放按钮下面），最大高度按地图容器算
-  const top = floorPanel.hidden ? 86 : floorPanel.offsetTop + floorPanel.offsetHeight + 8;
-  objPanel.style.top = `${top}px`;
-  objPanel.style.maxHeight = `${mapEl.value!.clientHeight - top - 16}px`;
   objPanel.hidden = false;
 }
 
-function findAndDraw(tasksData: TasksResponse["data"], tr: TranslationMap): string[] {
+function findAndDraw(
+  tasksData: TasksResponse["data"],
+  tr: TranslationMap,
+): { missing: string[]; layers: FocusLayer[] } {
   const missing: string[] = [];
+  const drawnFrom = focusLayers.length;
   const zoneHits = new Map<string, { zone: ZoneDef; entries: ObjectiveEntry[] }>(); // zone.id -> 跨任务去重
   const itemHits = new Map<string, { p: TaskPosition; entries: ObjectiveEntry[] }>(); // "x,z" -> 点位
   for (const qid of qIds) {
@@ -885,17 +1004,284 @@ function findAndDraw(tasksData: TasksResponse["data"], tr: TranslationMap): stri
   }
   for (const { p, entries } of itemHits.values()) {
     const floor = layerForZone(p);
-    const marker = L.circleMarker(pos(p), {
-      radius: 6,
-      color: "#ff5252",
-      weight: 2,
-      fillColor: "#ff5252",
-      fillOpacity: 0.8,
-    }).addTo(map!);
+    const marker = circlePoint(p).addTo(map!);
     bindFocusPopup(trackFocus(marker, floor, { opacity: 1, fillOpacity: 0.8 }, { opacity: 0.15, fillOpacity: 0.1 }), entries, tr, floor);
   }
-  return missing;
+  return { missing, layers: focusLayers.slice(drawnFrom) };
 }
+
+/* ---- 任务搜索 / 任务列表 ---- */
+
+/** 任务数据按 模式+语言 缓存（fetchCached 本身有 localStorage 缓存，这里是内存索引） */
+let taskCacheKey = "";
+let taskById = new Map<string, TaskDef>();
+let taskTr: TranslationMap = {};
+interface TaskSearchEntry {
+  id: string;
+  label: string;
+  en: string;
+  norm: string;
+  py: string;
+  pya: string;
+  img: string;
+}
+let taskSearchIndex: TaskSearchEntry[] = [];
+
+async function ensureTaskData() {
+  const key = `${config.mode}:${config.lang}`;
+  if (taskCacheKey === key) return;
+  const tasksData = (await fetchCached<TasksResponse>(`/${config.mode}/tasks`)).data;
+  const tr = (await fetchCached<TrResponse>(`/${config.mode}/tasks_${config.lang}`)).data;
+  const en =
+    config.lang === "en"
+      ? tr
+      : (await fetchCached<TrResponse>(`/${config.mode}/tasks_en`)).data;
+  taskById = new Map(Object.values(tasksData.tasks).map((t) => [t.id, t]));
+  taskTr = tr;
+  taskSearchIndex = Object.values(tasksData.tasks).map((t) => {
+    const label = tr[t.name] || t.normalizedName || t.name;
+    const { py, pya } = pinyinIndex(label);
+    return {
+      id: t.id,
+      label,
+      en: (en[t.name] || t.name).toLowerCase(),
+      norm: (t.normalizedName || "").toLowerCase(),
+      py,
+      pya,
+      img: t.taskImageLink || "",
+    };
+  });
+  taskCacheKey = key;
+}
+
+const searchText = ref("");
+const searchResults = ref<TaskSearchEntry[]>([]);
+const searchActive = ref(0);
+
+/** 任务在当前地图上是否有自己的触发区域（zones）；
+ * 只有任务物品点位（questItem 刷新点）而没有自有区域的任务不出现在搜索里 */
+function taskOnCurrentMap(task: TaskDef): boolean {
+  const apiIds = mapData?.apiIds || [];
+  for (const ob of task.objectives || []) {
+    for (const z of ob.zones || []) {
+      if (apiIds.includes(z.map)) return true;
+    }
+  }
+  return false;
+}
+
+/** 中文/英文/normalizedName/拼音全拼/首字母 匹配（与物品/任务页一致），
+ * 只保留当前地图有目标的任务，按相关度排序取前 8 个 */
+function runSearch() {
+  const q = searchText.value.trim().toLowerCase();
+  if (!q) {
+    searchResults.value = [];
+    return;
+  }
+  if (!taskSearchIndex.length) {
+    // 数据尚未加载完（首次搜索触发加载中），加载完成后重跑
+    void ensureTaskData().then(runSearch);
+    return;
+  }
+  const score = (t: TaskSearchEntry) => {
+    const label = t.label.toLowerCase();
+    if (label === q || t.en === q || t.norm === q) return 0;
+    if (label.startsWith(q) || t.en.startsWith(q) || t.norm.startsWith(q)) return 1;
+    if (t.py.startsWith(q) || t.pya.startsWith(q)) return 2;
+    return 3;
+  };
+  searchResults.value = taskSearchIndex
+    .filter(
+      (t) =>
+        (t.label.toLowerCase().includes(q) ||
+          t.en.includes(q) ||
+          t.norm.includes(q) ||
+          t.py.includes(q) ||
+          t.pya.includes(q)) &&
+        taskOnCurrentMap(taskById.get(t.id)!),
+    )
+    .map((t) => ({ t, s: score(t) }))
+    .sort((a, b) => a.s - b.s || a.t.label.length - b.t.label.length)
+    .slice(0, 8)
+    .map(({ t }) => t);
+  searchActive.value = 0;
+}
+
+function onSearchKey(e: KeyboardEvent) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!searchResults.value.length) return;
+    const d = e.key === "ArrowDown" ? 1 : -1;
+    searchActive.value =
+      (searchActive.value + d + searchResults.value.length) % searchResults.value.length;
+  } else if (e.key === "Enter") {
+    const r = searchResults.value[searchActive.value];
+    if (r) pickTask(r);
+  } else if (e.key === "Escape") {
+    searchText.value = "";
+    searchResults.value = [];
+  }
+}
+
+/** 绘制单个任务的当前地图目标（zones 黄多边形 + questItem 红点位，与 URL 聚焦同一套）。
+ * tracked=true 时图层带 _taskId 标记来源为任务列表（目标行显示移除按钮）；
+ * tracked=false 用于 ?task=<id> 无 q 参数的 URL 进入。返回本次绘制的图层 */
+function drawTaskObjectives(task: TaskDef, tracked: boolean): FocusLayer[] {
+  const drawn: FocusLayer[] = [];
+  if (!map || !mapData) return drawn;
+  const md = mapData;
+  const zoneHits = new Map<string, { zone: ZoneDef; entries: ObjectiveEntry[] }>();
+  // 物品目标按 objective 分组：一个目标一组刷点（目标面板一行），组内按坐标去重
+  const itemGroups = new Map<
+    string,
+    { positions: TaskPosition[]; seen: Set<string>; entries: ObjectiveEntry[] }
+  >();
+  for (const ob of task.objectives || []) {
+    for (const zone of ob.zones || []) {
+      if (!md.apiIds.includes(zone.map)) continue;
+      if (!zoneHits.has(zone.id)) zoneHits.set(zone.id, { zone, entries: [] });
+      zoneHits.get(zone.id)!.entries.push({ task, ob });
+    }
+    if (ob.questItem) {
+      const k = ob.id || ob.questItem;
+      for (const loc of ob.possibleLocations || []) {
+        if (!md.apiIds.includes(loc.map)) continue;
+        for (const p of loc.positions || []) {
+          let g = itemGroups.get(k);
+          if (!g) {
+            g = { positions: [], seen: new Set(), entries: [{ task, ob }] };
+            itemGroups.set(k, g);
+          }
+          const pk = `${p.x},${p.z}`;
+          if (g.seen.has(pk)) continue;
+          g.seen.add(pk);
+          g.positions.push(p);
+        }
+      }
+    }
+  }
+  for (const { zone, entries } of zoneHits.values()) {
+    const floor = layerForZone(zone.position);
+    const poly = L.polygon(zoneLatLngs(zone), {
+      color: "#ffd54a",
+      weight: 3,
+      fillColor: "#ffd54a",
+      fillOpacity: 0.15,
+      className: "zone-focus",
+    }).addTo(map!);
+    const fl = trackFocus(
+      poly,
+      floor,
+      { opacity: 1, fillOpacity: 0.15 },
+      { opacity: 0.15, fillOpacity: 0.03 },
+    );
+    if (tracked) fl._taskId = task.id;
+    bindFocusPopup(fl, entries, taskTr, floor);
+    drawn.push(fl);
+  }
+  for (const { positions, entries } of itemGroups.values()) {
+    // 每个刷点一个红点（子点自带气泡与楼层信息）；
+    // 多刷点合并为一组：整组聚焦时自适应到全部刷点、每个刷点弹气泡
+    const markers: L.CircleMarker[] = [];
+    const floors = new Set<MapLayer | null>();
+    for (const p of positions) {
+      const floor = layerForZone(p);
+      const m = circlePoint(p).addTo(map!);
+      const fl = m as L.Path as FocusLayer;
+      fl._floor = floor;
+      bindFocusPopup(fl, entries, taskTr, floor);
+      markers.push(m);
+      floors.add(floor);
+    }
+    const floor = floors.size === 1 ? [...floors][0] : null;
+    const fl = trackFocus(
+      markers.length === 1 ? markers[0] : L.featureGroup(markers).addTo(map!),
+      floor,
+      { opacity: 1, fillOpacity: 0.8 },
+      { opacity: 0.15, fillOpacity: 0.1 },
+    );
+    fl._entries = entries; // 组本身不绑气泡，但目标面板/勾选逻辑读 _entries
+    if (tracked) fl._taskId = task.id;
+    drawn.push(fl);
+  }
+  // 非当前楼层的绘制物初始即为调暗样式
+  for (const l of drawn) {
+    if ((l._floor || null) !== activeFloor) l.setStyle(l._dim);
+  }
+  return drawn;
+}
+
+/** 重绘任务列表来源的目标（URL 聚焦的绘制物不动），并重建目标列表面板 */
+async function redrawTracked() {
+  for (const l of focusLayers.filter((l) => l._taskId)) l.remove();
+  focusLayers = focusLayers.filter((l) => !l._taskId);
+  if (!map || !mapData) return;
+  if (mapTasks.ids.length) {
+    await ensureTaskData();
+    if (!map || !mapData) return; // await 期间地图可能被重建，旧实例上的绘制直接丢弃
+    for (const id of mapTasks.ids) {
+      const task = taskById.get(id);
+      if (!task) {
+        console.warn("任务列表中存在未知任务 id:", id);
+        continue;
+      }
+      drawTaskObjectives(task, true);
+    }
+  }
+  buildObjectiveList(taskTr);
+}
+
+/** 聚焦一组目标图层（URL 进入与任务列表共用）：切楼层（多层回主层）、
+ * 缩放到全部点位、弹气泡（互相遮挡的只留先打开的） */
+function focusLayersView(layers: FocusLayer[], pad: number) {
+  if (!layers.length || !map || !mapData) return;
+  closeAllFocusPopups();
+  const floors = new Set(layers.map((l) => l._floor || null));
+  setFloor(floors.size === 1 ? [...floors][0] : null);
+  // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应。
+  // animate:false：缩放动画中气泡位置是变换中的中间值，去遮挡检测会拿到错误位置
+  map.fitBounds(L.featureGroup(layers).getBounds().pad(pad), {
+    maxZoom: mapData.maxZoom,
+    animate: false,
+  });
+  openLayerPopups(layers);
+}
+
+/** 聚焦任务列表中的某个任务的全部目标（复用 URL 进入的聚焦行为） */
+function focusTrackedTask(id: string) {
+  const layers = focusLayers.filter((l) => l._taskId === id);
+  focusLayersView(layers, layers.length > 1 ? 0.5 : 2);
+}
+
+function pickTask(r: TaskSearchEntry) {
+  searchText.value = "";
+  searchResults.value = [];
+  if (mapTasks.ids.includes(r.id)) {
+    // 已在列表里：不重复添加，直接聚焦
+    focusTrackedTask(r.id);
+    return;
+  }
+  mapTasks.add(r.id);
+  // ids watcher 已触发一次重绘；这里等重绘完成后把视角聚焦到新任务
+  void nextTick(async () => {
+    await redrawTracked();
+    focusTrackedTask(r.id);
+  });
+}
+
+// 任务列表变化（本地增删 / 远程同步）→ 重绘当前地图上的任务目标
+watch(
+  () => [...mapTasks.ids],
+  () => {
+    void redrawTracked();
+  },
+);
+
+// 目标完成状态变化（本地勾选 / 远程同步）→ 只重建面板勾选态，不动地图图层
+watch(
+  () => [...mapTasks.done],
+  () => buildObjectiveList(taskTr),
+);
 
 /* ---- 生命周期：清理旧地图实例与状态 ---- */
 
@@ -1355,47 +1741,36 @@ async function init() {
     followLatest();
   }
 
-  if (!qIds.length) {
+  // 任务列表（搜索添加/同步恢复）目标绘制，不依赖 URL 参数
+  await redrawTracked();
+  if (!map) return; // await 期间地图可能被重建
+
+  if (!qIds.length && !taskParam) {
     setStatus("");
     return;
   }
 
   setStatus("加载任务数据 ...");
-  const tasksData = (await fetchCached<TasksResponse>(`/${gameMode}/tasks`)).data;
-  const tr = (await fetchCached<TrResponse>(`/${gameMode}/tasks_${lang}`)).data;
-  const missing = findAndDraw(tasksData, tr);
+  await ensureTaskData();
+  if (!map) return;
+  const tr = taskTr;
+  let missing: string[] = [];
+  let layers: FocusLayer[] = [];
+  if (qIds.length) {
+    ({ missing, layers } = findAndDraw({ tasks: Object.fromEntries(taskById) }, tr));
+  } else {
+    // 只传任务 id：从任务数据推出它在当前地图的区域/物品点位
+    const task = taskById.get(taskParam);
+    if (task) layers = drawTaskObjectives(task, false);
+    else missing = [taskParam];
+  }
   buildObjectiveList(tr);
 
-  if (focusLayers.length) {
-    // 只有所有点位在同一楼层时才自动切层，否则保持主层视图
-    const floors = new Set(focusLayers.map((l) => l._floor || null));
-    setFloor(floors.size === 1 ? [...floors][0] : null);
-    const group = L.featureGroup(focusLayers);
-    // 单点小范围需要大 padding 避免过度放大；多点按点位分布自适应。
-    // animate:false：缩放动画中气泡位置是变换中的中间值，去遮挡检测会拿到错误位置
-    map.fitBounds(group.getBounds().pad(qIds.length > 1 ? 0.3 : 2), {
-      maxZoom: mapData.maxZoom,
-      animate: false,
-    });
-    // 所有点位都弹出自说明气泡（autoClose:false 保证同时可见）；
-    // 距离太近互相遮挡的气泡只保留先打开的，其余点击高亮区域查看
-    const keptRects: DOMRect[] = [];
-    for (const l of focusLayers) {
-      const popup = l.getPopup();
-      if (!popup) continue;
-      l.openPopup();
-      const el = popup.getElement();
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      const overlap = keptRects.some(
-        (k) => !(r.right < k.left || r.left > k.right || r.bottom < k.top || r.top > k.bottom),
-      );
-      if (overlap) l.closePopup();
-      else keptRects.push(r);
-    }
+  if (layers.length) {
+    focusLayersView(layers, qIds.length > 1 || layers.length > 1 ? 0.3 : 2);
     setStatus(missing.length ? `未找到: ${missing.join(", ")}` : "");
   } else {
-    setStatus(`未找到目标: ${qIds.join(", ")}`);
+    setStatus(`未找到目标: ${qIds.length ? qIds.join(", ") : taskParam}`);
   }
 }
 
@@ -1458,32 +1833,61 @@ onBeforeUnmount(() => {
 <template>
   <div class="map-page">
     <div class="map-topleft">
-      <div ref="floorPanelEl" class="map-floor-panel" hidden></div>
-      <div class="map-topbar">
-        <select ref="styleSelectEl" title="地图样式">
-          <option value="">自动</option>
-          <option value="svg">抽象图</option>
-          <option value="tile">卫星图</option>
-        </select>
-        <span class="map-status">{{ status }}</span>
-        <button v-if="track.points.length" class="track-btn" title="清除轨迹点" @click="track.clear()">
-          清除轨迹
-        </button>
-        <template v-if="syncMode">
-          <span class="sync-badge" :class="sync.clientStatus" :title="sync.clientHint">
-            {{ sync.clientHint || syncStatusText }}
-          </span>
-          <button class="track-btn" title="断开位置同步" @click="disconnectSync">断开</button>
-        </template>
-        <button
-          v-else
-          class="track-btn"
-          :class="{ active: sync.hosting }"
-          title="同步玩家位置到手机（局域网直连）"
-          @click="syncModal = true"
-        >
-          同步到手机
-        </button>
+      <div class="map-leftcol">
+        <div class="map-topbar">
+          <select ref="styleSelectEl" title="地图样式">
+            <option value="">自动</option>
+            <option value="svg">抽象图</option>
+            <option value="tile">卫星图</option>
+          </select>
+          <span class="map-status">{{ status }}</span>
+          <button v-if="track.points.length" class="track-btn" title="清除轨迹点" @click="track.clear()">
+            清除轨迹
+          </button>
+          <template v-if="syncMode">
+            <span class="sync-badge" :class="sync.clientStatus" :title="sync.clientHint">
+              {{ sync.clientHint || syncStatusText }}
+            </span>
+            <button class="track-btn" title="断开位置同步" @click="disconnectSync">断开</button>
+          </template>
+          <button
+            v-else
+            class="track-btn"
+            :class="{ active: sync.hosting }"
+            title="同步玩家位置到手机（局域网直连）"
+            @click="syncModal = true"
+          >
+            同步到手机
+          </button>
+        </div>
+        <div ref="floorPanelEl" class="map-floor-panel" hidden></div>
+        <div ref="objPanelEl" class="map-obj-panel" hidden></div>
+      </div>
+    </div>
+    <div class="map-task-ui">
+      <div class="map-task-search">
+        <input
+          v-model="searchText"
+          type="text"
+          placeholder="搜索任务（仅当前地图有目标的） ..."
+          @input="runSearch"
+          @focus="ensureTaskData().then(runSearch)"
+          @keydown="onSearchKey"
+          @blur="searchResults = []"
+        />
+        <div v-if="searchResults.length" class="task-search-results">
+          <div
+            v-for="(r, i) in searchResults"
+            :key="r.id"
+            class="task-search-card"
+            :class="{ active: i === searchActive }"
+            @mousedown.prevent="pickTask(r)"
+            @mouseenter="searchActive = i"
+          >
+            <img v-if="r.img" :src="r.img" class="task-search-icon" loading="lazy" alt="" />
+            <span class="task-search-name">{{ r.label }}</span>
+          </div>
+        </div>
       </div>
     </div>
     <div v-show="raidTime || cursorPos || zoomInfo" class="map-status-chip">
@@ -1491,7 +1895,6 @@ onBeforeUnmount(() => {
       <span v-if="cursorPos" class="map-cursor-pos">{{ cursorPos }}</span>
       <span class="map-raid-time">{{ raidTime }}</span>
     </div>
-    <div ref="objPanelEl" class="map-obj-panel" hidden></div>
     <div ref="markerPanelEl" class="map-marker-panel" hidden></div>
     <div ref="mapEl" class="map-leaflet"></div>
     <SyncModal v-model:show="syncModal" :map-key="currentMapKey" />
@@ -1512,15 +1915,23 @@ onBeforeUnmount(() => {
   background: #1a1b1e;
 }
 
-/* 左上角容器：楼层面板 + 顶部栏横向排列，顶部栏紧跟面板实际宽度（无空隙） */
+/* 左上角容器：顶栏 + 左列（楼层面板 + 目标面板）纵向堆叠，避免面板宽度不一致留出空洞 */
 .map-page .map-topleft {
   position: absolute;
   top: 10px;
   left: 10px;
   z-index: 1000;
   display: flex;
+  align-items: flex-start;
+}
+
+/* 左列：顶栏、楼层面板、目标面板上下排列，目标面板高度受视口约束（超出滚动） */
+.map-page .map-leftcol {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+  max-height: calc(100vh - 20px);
 }
 
 .map-page .map-topbar {
@@ -1560,6 +1971,85 @@ onBeforeUnmount(() => {
 .map-page .track-btn.active {
   color: #63e2b7;
   border-color: #63e2b7;
+}
+
+/* 任务搜索 + 任务列表：桌面顶部居中；移动端挪到底部全宽（见媒体查询） */
+.map-page .map-task-ui {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1002; /* 高于 Leaflet 控件（缩放按钮 1000），结果列表展开时不被压住 */
+  width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-page .map-task-search {
+  position: relative;
+}
+
+.map-page .map-task-search input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(20, 21, 24, 0.85);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #d8d8d8;
+  font: 14px/1.4 sans-serif;
+  outline: none;
+}
+
+.map-page .map-task-search input:focus {
+  border-color: #63e2b7;
+}
+
+.map-page .task-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: rgba(20, 21, 24, 0.95);
+  border: 1px solid #3a3b40;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.map-page .task-search-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  color: #d8d8d8;
+  font: 14px/1.4 sans-serif;
+}
+
+.map-page .task-search-card.active {
+  background: #2e2f35;
+  outline: 1px solid #63e2b7;
+}
+
+/* 任务图片是长方形：固定宽度、高度自适应，上下居中 */
+.map-page .task-search-icon {
+  width: 96px;
+  height: auto;
+  border-radius: 4px;
+  flex: none;
+}
+
+.map-page .task-search-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 位置同步状态徽章（接收模式） */
@@ -1692,13 +2182,11 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-/* 任务目标列表：楼层选择器下方，点击单聚焦对应目标 */
+/* 任务目标列表：楼层面板下方（随左列文档流），点击单聚焦对应目标；头部行可收起 */
 .map-page .map-obj-panel {
-  position: absolute;
-  left: 10px;
-  z-index: 1000;
   width: 220px;
   overflow-y: auto;
+  min-height: 0;
   background: rgba(20, 21, 24, 0.85);
   border: 1px solid #3a3b40;
   border-radius: 6px;
@@ -1711,11 +2199,66 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+/* 收起时收缩到标题宽度（与楼层面板一致），避免顶栏被固定宽度顶出空白 */
+.map-page .map-obj-panel.collapsed {
+  width: fit-content;
+}
+
+.map-page .obj-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  padding: 2px 4px 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-page .obj-toggle {
+  color: #9d9d9d;
+  font-size: 11px;
+}
+
+.map-page .map-obj-panel.collapsed .obj-item {
+  display: none;
+}
+
 .map-page .obj-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 8px;
   border-radius: 4px;
   cursor: pointer;
   user-select: none;
+}
+
+.map-page .obj-item input[type="checkbox"] {
+  accent-color: #ffd54a;
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+}
+
+.map-page .obj-item .obj-body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 已完成目标：整行降透明度 */
+.map-page .obj-item.done .obj-body {
+  opacity: 0.45;
+}
+
+.map-page .obj-item .obj-remove {
+  flex: none;
+  color: #9d9d9d;
+  padding: 0 2px;
+}
+
+.map-page .obj-item .obj-remove:hover {
+  color: #ff5252;
 }
 
 .map-page .obj-item:hover {
@@ -1916,19 +2459,17 @@ onBeforeUnmount(() => {
 
   .map-page .map-topleft {
     right: 10px;
-    flex-wrap: wrap;
   }
 
   .map-page .map-topbar {
-    order: -1;
-    flex: 0 0 100%;
-    box-sizing: border-box;
     font-size: 12px;
     padding: 4px 8px;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .map-page .map-topbar::-webkit-scrollbar {
@@ -1948,6 +2489,37 @@ onBeforeUnmount(() => {
 
   .map-page .map-obj-panel {
     width: 180px;
+  }
+
+  /* 任务搜索栏放底部占满宽度；结果列表与任务列表向上展开 */
+  .map-page .map-task-ui {
+    top: auto;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    transform: none;
+    flex-direction: column-reverse;
+  }
+
+  .map-page .task-search-results {
+    top: auto;
+    bottom: calc(100% + 4px);
+    max-height: 30vh;
+  }
+
+  /* 移动端结果卡片图片收小，给列表留出行数 */
+  .map-page .task-search-icon {
+    width: 64px;
+  }
+
+  /* 底部搜索栏占位：缩放按钮与右下状态块上移避让 */
+  .map-page .leaflet-bottom.leaflet-left {
+    bottom: 44px;
+  }
+
+  .map-page .map-status-chip {
+    bottom: 54px;
   }
 }
 </style>

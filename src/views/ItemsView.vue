@@ -445,7 +445,7 @@ watch(() => [config.mode, config.lang], () => load());
 .goods-card {
   display: flex;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .goods-icon {
