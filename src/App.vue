@@ -432,7 +432,8 @@ a:hover {
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* dvh 跟随动态视口：手机浏览器底部工具栏常驻时自动收缩，避免底部控件被遮挡 */
+  height: 100dvh;
 }
 
 .app-header {

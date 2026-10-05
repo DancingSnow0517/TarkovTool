@@ -1931,7 +1931,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
-  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
 }
 
 .map-page .map-topbar {
