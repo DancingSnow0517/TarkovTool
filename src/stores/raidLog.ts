@@ -93,8 +93,10 @@ export const useRaidLogStore = defineStore("raidLog", {
     /** 从日志文本中提取最新的地图信息并更新状态。
      * 两种来源取文本中出现位置较后的一个：
      * - 线上战局：NetworkGameCreate 行的 Location 字段
-     * - 所有模式（含 PVE/训练）：scene preset 场景加载行的 bundle 名 */
-    applyLogText(text: string) {
+     * - 所有模式（含 PVE/训练）：scene preset 场景加载行的 bundle 名
+     * at 为事件时间：基线恢复传日志文件的最后修改时间（陈旧战局可被过期逻辑过滤），
+     * 增量监听传当前时间 */
+    applyLogText(text: string, at: number) {
       let location = "";
       let locationAt = -1;
       for (const m of text.matchAll(LOCATION_RE)) {
@@ -120,9 +122,11 @@ export const useRaidLogStore = defineStore("raidLog", {
         if (!mapKey) console.warn("未知地图 bundle:", bundle);
       }
       if (!mapKey || mapKey === this.mapKey) return;
+      // 早于当前事件时间的记录不应用（基线读取多个轮转文件时顺序不保证，防止旧文件覆盖新状态）
+      if (at < this.lastAt) return;
       this.location = raw;
       this.mapKey = mapKey;
-      this.lastAt = Date.now();
+      this.lastAt = at;
     },
     async startWatching(handle: FileSystemDirectoryHandle) {
       this.disable();
@@ -138,7 +142,7 @@ export const useRaidLogStore = defineStore("raidLog", {
         for await (const h of newest.values()) {
           if (h.kind !== "file" || !APP_LOG_RE.test(h.name)) continue;
           const file = await (h as FileSystemFileHandle).getFile();
-          this.applyLogText(await file.text());
+          this.applyLogText(await file.text(), file.lastModified);
           offsets.set(`${newest.name}/${h.name}`, file.size);
         }
       } else {
@@ -160,7 +164,7 @@ export const useRaidLogStore = defineStore("raidLog", {
               if (file.size <= offset) return;
               const text = await file.slice(offset).text();
               offsets.set(path, file.size);
-              this.applyLogText(text);
+              this.applyLogText(text, Date.now());
             })
             .catch((e) => console.error("读取日志增量失败:", path, e));
         }
