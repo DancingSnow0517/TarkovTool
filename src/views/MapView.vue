@@ -1012,7 +1012,7 @@ function findAndDraw(
 
 /* ---- 任务搜索 / 任务列表 ---- */
 
-/** 任务数据按 模式+语言 缓存（fetchCached 本身有 localStorage 缓存，这里是内存索引） */
+/** 任务数据按 模式+语言 缓存（fetchCached 本身有 Cache Storage 缓存，这里是内存索引） */
 let taskCacheKey = "";
 let taskById = new Map<string, TaskDef>();
 let taskTr: TranslationMap = {};
