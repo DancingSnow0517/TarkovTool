@@ -2,7 +2,7 @@ name = "ttk-signal"
 main = "src/index.ts"
 compatibility_date = "2026-01-01"
 
-routes = [{ pattern = "signal.dancingsnow.xyz", custom_domain = true }]
+routes = [{ pattern = "signal.tarkovkit.app", custom_domain = true }]
 
 [durable_objects]
 bindings = [{ name = "ROOMS", class_name = "SignalingRoom" }]

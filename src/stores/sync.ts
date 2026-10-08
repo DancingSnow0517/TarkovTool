@@ -30,8 +30,7 @@ export type SyncMsg =
 export type ClientStatus = "off" | "connecting" | "connected" | "reconnecting";
 
 /** 信令服务器：默认自建 Worker（ntfy 协议子集）；可用构建环境变量 VITE_SIGNALING_URL 覆盖（如回退公共 ntfy.sh） */
-const SIGNALING: string =
-  import.meta.env.VITE_SIGNALING_URL || "https://signal.dancingsnow.xyz";
+const SIGNALING: string = import.meta.env.VITE_SIGNALING_URL || "https://signal.tarkovkit.app";
 const TOPIC_PREFIX = "ttk-sync-";
 /** client 未连接时重新发布 join 的间隔 */
 const JOIN_INTERVAL_MS = 8000;
