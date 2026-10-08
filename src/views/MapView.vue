@@ -404,23 +404,25 @@ function setFloor(layer: MapLayer | null) {
 
 /* ---- 地图底层 ---- */
 
-async function addSvgLayer(md: MapData, bounds: L.LatLngBounds) {
+async function addSvgLayer(md: MapData, bounds: L.LatLngBounds, overlayOnly = false) {
   const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   const text = await (await fetch(import.meta.env.BASE_URL + md.svgPath)).text();
   svgElement.innerHTML = text;
   svgRoot = svgElement.children[0] as SVGElement;
   svgElement.setAttribute("viewBox", String(svgRoot.getAttribute("viewBox")));
-  // 顶层 g 节点里只保留本图基准楼层，其余隐藏
+  // 顶层 g 节点里只保留本图基准楼层，其余隐藏；
+  // overlayOnly（卫星图叠加楼层平面图）模式下基准楼层也隐藏，只留待激活的楼层分组
   for (const g of Array.from(svgRoot.children).filter((c) => c.nodeName === "g" && c.id)) {
     if (g.id === md.svgLayer || (g as SVGElement).dataset["keepWithGroup"] === md.svgLayer) {
       g.classList.add("base-layer");
+      if (overlayOnly) g.classList.add("hidden-layer");
     } else {
       g.classList.add("hidden-layer", "overlay-layer");
     }
   }
   const svgBounds = md.svgBounds ? getBounds(md.svgBounds) : bounds;
-  L.svgOverlay(svgElement, svgBounds, { className: "base-layer" }).addTo(map!);
+  L.svgOverlay(svgElement, svgBounds, { className: overlayOnly ? "floor-overlay" : "base-layer" }).addTo(map!);
 }
 
 function addTileLayer(md: MapData, bounds: L.LatLngBounds) {
@@ -1679,11 +1681,17 @@ async function init() {
   const useSvg = mapData.svgPath && styleParam !== "tile";
   const useTile = mapData.tilePath && (styleParam === "tile" || !mapData.svgPath);
   try {
-    if (useSvg) await addSvgLayer(mapData, mapBounds);
-    else if (useTile) addTileLayer(mapData, mapBounds);
-  } catch {
+    if (useSvg) {
+      await addSvgLayer(mapData, mapBounds);
+    } else if (useTile) {
+      addTileLayer(mapData, mapBounds);
+      // 无楼层瓦片的地图（立交桥/海岸线等）：把 SVG 楼层平面图叠到卫星图上
+      if (mapData.svgPath) await addSvgLayer(mapData, mapBounds, true);
+    }
+  } catch (e) {
     // SVG 加载失败时回退瓦片
-    if (mapData.tilePath) addTileLayer(mapData, mapBounds);
+    console.warn("SVG 图层加载失败:", e);
+    if (!useTile && mapData.tilePath) addTileLayer(mapData, mapBounds);
   }
   addLabels(mapData);
   setFloor(null); // 应用初始标签可见性：完全属于某楼层的标签在主层隐藏
