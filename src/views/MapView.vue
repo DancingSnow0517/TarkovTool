@@ -58,6 +58,14 @@ const syncModal = ref(false);
 const syncMode = computed(() => !!queryStr(route.query.sync));
 const currentMapKey = computed(() => queryStr(route.query.map) || "customs");
 
+/** 瓦片源：瓦片不随仓库分发，相对路径统一走 R2（VITE_TILE_BASE 可覆盖为本地镜像） */
+const TILE_BASE: string = import.meta.env.VITE_TILE_BASE || "https://maps.tarkovkit.app";
+
+/** tilePath 为绝对地址（assets.tarkov.dev）时原样使用，相对路径拼 R2 前缀 */
+function tileUrl(path: string): string {
+  return path.startsWith("http") ? path : `${TILE_BASE}/${path.replace(/^\//, "")}`;
+}
+
 const syncStatusText = computed(() => {
   switch (sync.clientStatus) {
     case "connecting":
@@ -360,7 +368,7 @@ function setFloor(layer: MapLayer | null) {
     floorOverlay = null;
   }
   if (layer && layer.tilePath && !(svgRoot && layer.svgLayer)) {
-    floorOverlay = L.tileLayer(layer.tilePath, {
+    floorOverlay = L.tileLayer(tileUrl(layer.tilePath), {
       tileSize: mapData.tileSize || 256,
       bounds: mapBounds ?? undefined,
       maxZoom: Math.max(7, mapData.maxZoom),
@@ -416,7 +424,7 @@ async function addSvgLayer(md: MapData, bounds: L.LatLngBounds) {
 }
 
 function addTileLayer(md: MapData, bounds: L.LatLngBounds) {
-  baseTileLayer = L.tileLayer(md.tilePath!, {
+  baseTileLayer = L.tileLayer(tileUrl(md.tilePath!), {
     tileSize: md.tileSize || 256,
     bounds,
     maxZoom: Math.max(7, md.maxZoom),

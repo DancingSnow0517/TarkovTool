@@ -498,7 +498,7 @@
     "maxZoom": 6,
     "tileSize": 256,
     "svgPath": "assets/maps/svg/GroundZero.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/groundzero/main_summer/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/groundzero/main_summer/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": [
       -1000,
@@ -617,7 +617,7 @@
       {
         "name": "2nd Floor",
         "svgLayer": "Second_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/groundzero/2nd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/groundzero/2nd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -649,7 +649,7 @@
       {
         "name": "3rd Floor",
         "svgLayer": "Third_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/groundzero/3rd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/groundzero/3rd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -662,7 +662,7 @@
       {
         "name": "Garage",
         "svgLayer": "Underground_Level",
-        "tilePath": "https://assets.tarkov.dev/maps/groundzero/garage/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/groundzero/garage/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -722,7 +722,7 @@
     "maxZoom": 6,
     "tileSize": 256,
     "svgPath": "assets/maps/svg/Customs.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/customs_0.16/main/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/customs_0.16/main/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": [
       -1000,
@@ -918,7 +918,7 @@
       {
         "name": "2nd Floor",
         "svgLayer": "Second_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/customs_0.16/2nd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/customs_0.16/2nd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1160,7 +1160,7 @@
       {
         "name": "3rd Floor",
         "svgLayer": "Third_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/customs_0.16/3rd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/customs_0.16/3rd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1221,7 +1221,7 @@
           },
           {
             "height": [
-              8.0,
+              8,
               11.1
             ],
             "bounds": [
@@ -1242,7 +1242,7 @@
       },
       {
         "name": "4th Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/customs_0.16/4th/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/customs_0.16/4th/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1268,7 +1268,7 @@
       {
         "name": "Underground",
         "svgLayer": "Underground_Level",
-        "tilePath": "https://assets.tarkov.dev/maps/customs_0.16/underground/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/customs_0.16/underground/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1372,7 +1372,7 @@
     "maxZoom": 6,
     "tileSize": 256,
     "svgPath": "assets/maps/svg/Factory.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/factory/main/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/factory/main/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Floor",
     "heightRange": [
       -1,
@@ -1655,7 +1655,7 @@
       {
         "name": "2nd Floor",
         "svgLayer": "Second_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/factory/2nd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/factory/2nd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1668,7 +1668,7 @@
       {
         "name": "3rd Floor",
         "svgLayer": "Third_Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/factory/3rd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/factory/3rd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1681,7 +1681,7 @@
       {
         "name": "Tunnels",
         "svgLayer": "Basement",
-        "tilePath": "https://assets.tarkov.dev/maps/factory/tunnels/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/factory/tunnels/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1707,17 +1707,17 @@
     ],
     "svgBounds": null,
     "transform": [
-      2.0,
-      125.0,
+      2,
+      125,
       3.5,
-      91.0
+      91
     ],
     "coordinateRotation": 180,
     "minZoom": 1,
     "maxZoom": 5,
     "tileSize": 256,
     "svgPath": null,
-    "tilePath": "assets/maps/icebreaker/06_infirmary/{z}/{x}/{y}.png",
+    "tilePath": "maps/icebreaker/06_infirmary/{z}/{x}/{y}.png",
     "svgLayer": null,
     "heightRange": [
       18.92,
@@ -1730,7 +1730,7 @@
     "layers": [
       {
         "name": "Infirmary",
-        "tilePath": "assets/maps/icebreaker/06_infirmary/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/06_infirmary/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1742,7 +1742,7 @@
       },
       {
         "name": "Helipad",
-        "tilePath": "assets/maps/icebreaker/07_helipad/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/07_helipad/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1754,7 +1754,7 @@
       },
       {
         "name": "Gym/Canteen",
-        "tilePath": "assets/maps/icebreaker/08_gym-canteen/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/08_gym-canteen/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1766,7 +1766,7 @@
       },
       {
         "name": "Accommodation (lower)",
-        "tilePath": "assets/maps/icebreaker/09_accommodation_lower/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/09_accommodation_lower/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1778,7 +1778,7 @@
       },
       {
         "name": "Accommodation (mid)",
-        "tilePath": "assets/maps/icebreaker/10_accommodation_mid/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/10_accommodation_mid/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1790,7 +1790,7 @@
       },
       {
         "name": "Accommodation (upper)",
-        "tilePath": "assets/maps/icebreaker/11_accommodation_upper/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/11_accommodation_upper/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1802,7 +1802,7 @@
       },
       {
         "name": "Officers' Deck",
-        "tilePath": "assets/maps/icebreaker/12_officers_deck/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/12_officers_deck/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1814,7 +1814,7 @@
       },
       {
         "name": "Stairs (blocked)",
-        "tilePath": "assets/maps/icebreaker/13_stairs_blocked/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/13_stairs_blocked/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1826,7 +1826,7 @@
       },
       {
         "name": "Bridge",
-        "tilePath": "assets/maps/icebreaker/14_bridge/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/14_bridge/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1838,7 +1838,7 @@
       },
       {
         "name": "Bridge Roof",
-        "tilePath": "assets/maps/icebreaker/15_bridge_roof/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/15_bridge_roof/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1850,7 +1850,7 @@
       },
       {
         "name": "Control Room",
-        "tilePath": "assets/maps/icebreaker/00_control_room/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/00_control_room/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1862,7 +1862,7 @@
       },
       {
         "name": "Engine Room",
-        "tilePath": "assets/maps/icebreaker/01_engine_room/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/01_engine_room/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1874,7 +1874,7 @@
       },
       {
         "name": "Engine Room (upper)",
-        "tilePath": "assets/maps/icebreaker/02_engine_room_upper/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/02_engine_room_upper/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1886,7 +1886,7 @@
       },
       {
         "name": "Fuel Pumps (lower)",
-        "tilePath": "assets/maps/icebreaker/03_fuel_pumps_lower/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/03_fuel_pumps_lower/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1898,7 +1898,7 @@
       },
       {
         "name": "Fuel Pumps",
-        "tilePath": "assets/maps/icebreaker/04_fuel_pumps/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/04_fuel_pumps/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1910,7 +1910,7 @@
       },
       {
         "name": "Storage/Security",
-        "tilePath": "assets/maps/icebreaker/05_storage_ecurity/{z}/{x}/{y}.png",
+        "tilePath": "maps/icebreaker/05_storage_ecurity/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -1946,7 +1946,7 @@
     "maxZoom": 6,
     "tileSize": 256,
     "svgPath": "assets/maps/svg/Interchange.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/interchange/main/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/interchange/main/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": null,
     "apiIds": [
@@ -2800,7 +2800,7 @@
     "maxZoom": 6,
     "tileSize": 175,
     "svgPath": null,
-    "tilePath": "assets/maps/labs_v4/1st/{z}/{x}/{y}.png",
+    "tilePath": "maps/labs_v4/1st/{z}/{x}/{y}.png",
     "svgLayer": null,
     "heightRange": [
       -0.9,
@@ -3125,7 +3125,7 @@
     "layers": [
       {
         "name": "Second Level",
-        "tilePath": "assets/maps/labs_v4/2nd/{z}/{x}/{y}.png",
+        "tilePath": "maps/labs_v4/2nd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -3149,7 +3149,7 @@
       },
       {
         "name": "Technical",
-        "tilePath": "assets/maps/labs_v4/technical/{z}/{x}/{y}.png",
+        "tilePath": "maps/labs_v4/technical/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -3178,14 +3178,14 @@
       2.115,
       85.5,
       2.115,
-      128.0
+      128
     ],
     "coordinateRotation": 270,
     "minZoom": 1,
     "maxZoom": 6,
     "tileSize": null,
     "svgPath": null,
-    "tilePath": "assets/maps/labyrinth/main/{z}/{x}/{y}.png",
+    "tilePath": "maps/labyrinth/main/{z}/{x}/{y}.png",
     "svgLayer": null,
     "heightRange": null,
     "apiIds": [
@@ -3406,7 +3406,7 @@
     ],
     "transform": [
       0.395,
-      122.0,
+      122,
       0.395,
       137.65
     ],
@@ -3415,7 +3415,7 @@
     "maxZoom": 6,
     "tileSize": null,
     "svgPath": "assets/maps/svg/Reserve.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/reserve/main/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/reserve/main/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": [
       -7,
@@ -3676,7 +3676,7 @@
     "layers": [
       {
         "name": "2nd Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/reserve/2nd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/reserve/2nd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -3908,7 +3908,7 @@
       },
       {
         "name": "3rd Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/reserve/3rd/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/reserve/3rd/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -4028,7 +4028,7 @@
       },
       {
         "name": "4th Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/reserve/4th/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/reserve/4th/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -4110,7 +4110,7 @@
       },
       {
         "name": "5th Floor",
-        "tilePath": "https://assets.tarkov.dev/maps/reserve/5th/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/reserve/5th/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -4136,7 +4136,7 @@
       {
         "name": "Bunkers",
         "svgLayer": "Bunkers",
-        "tilePath": "https://assets.tarkov.dev/maps/reserve/bunkers/{z}/{x}/{y}.png",
+        "tilePath": "https://maps.tarkovkit.app/maps/reserve/bunkers/{z}/{x}/{y}.png",
         "extents": [
           {
             "height": [
@@ -4283,7 +4283,7 @@
     "maxZoom": 6,
     "tileSize": null,
     "svgPath": "assets/maps/svg/Shoreline.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/shoreline/main_summer/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/shoreline/main_summer/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": [
       -1000,
@@ -4595,7 +4595,7 @@
     "maxZoom": 6,
     "tileSize": null,
     "svgPath": "assets/maps/svg/Woods.svg",
-    "tilePath": "https://assets.tarkov.dev/maps/woods/main_0.16/{z}/{x}/{y}.png",
+    "tilePath": "https://maps.tarkovkit.app/maps/woods/main_0.16/{z}/{x}/{y}.png",
     "svgLayer": "Ground_Level",
     "heightRange": null,
     "apiIds": [

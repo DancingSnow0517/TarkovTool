@@ -18,6 +18,18 @@ export default defineConfig({
         navigateFallback: "index.html",
         runtimeCaching: [
           {
+            // R2 上的地图瓦片：跨域且无 CORS 头，no-cors 拉取并允许缓存 opaque 响应
+            urlPattern: ({ url }) => url.origin === "https://maps.tarkovkit.app",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "map-assets",
+              fetchOptions: { mode: "no-cors" },
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 2000, maxAgeSeconds: 30 * 24 * 3600 },
+            },
+          },
+          {
+            // 同源 svg 楼层图（瓦片已在 R2，本规则只覆盖 svg）
             urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/assets/maps/"),
             handler: "CacheFirst",
             options: {
