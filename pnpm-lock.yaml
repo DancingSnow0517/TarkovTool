@@ -26,9 +26,6 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
-      twikoo:
-        specifier: ^2.0.12
-        version: 2.0.12
       vue:
         specifier: ^3.5.18
         version: 3.5.43(typescript@5.9.3)
@@ -968,9 +965,6 @@ packages:
   '@trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1':
     resolution: {integrity: sha512-/67zpWDBLV+oYAEL682s1ktXL0HgqX76f6gaVGkGnVZlBbm1zd0v4Bz8MFF2GGhoX9rvfq3KSQHubFHwa6w6/Q==}
     engines: {node: '>=12'}
-
-  '@twikoojs/shared@2.0.12':
-    resolution: {integrity: sha512-b2A4ch51k+IaD4EfOWXjlQcYsGz5u8oM/ncWypkr/6NakYbjnziqPvdQs5R3AH++w/9pwnD7CW4SggGTDCM2ig==}
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
@@ -1981,9 +1975,6 @@ packages:
 
   treemate@0.3.11:
     resolution: {integrity: sha512-M8RGFoKtZ8dF+iwJfAJTOH/SM4KluKOKRJpjCMhI8bG3qB74zrFoArKZ62ll0Fr3mqkMJiQOmWYkdYgDeITYQg==}
-
-  twikoo@2.0.12:
-    resolution: {integrity: sha512-HmWBHgtwPRj9Zgja8QyNcLrY40tyWdajaPrltyMiMvtzd59TojuXvL5fyOBB5Wn7gfLNlyM5HD00SA+tipCY2A==}
 
   type-fest@0.16.0:
     resolution: {integrity: sha512-eaBzG6MxNzEn9kiwvtre90cXaNLkmadMWa1zQMs3XORCXNbsH/OewwbxC5ia9dCxIxnTAsSxXJaa/p5y8DlvJg==}
@@ -3147,8 +3138,6 @@ snapshots:
       json5: 2.2.3
       magic-string: 0.30.21
       string.prototype.matchall: 4.1.0
-
-  '@twikoojs/shared@2.0.12': {}
 
   '@types/estree@1.0.9': {}
 
@@ -4332,10 +4321,6 @@ snapshots:
       picomatch: 4.0.7
 
   treemate@0.3.11: {}
-
-  twikoo@2.0.12:
-    dependencies:
-      '@twikoojs/shared': 2.0.12
 
   type-fest@0.16.0: {}
 

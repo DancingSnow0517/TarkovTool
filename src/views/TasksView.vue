@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { NButton, NInput, NModal, NSpace, NSpin, useMessage } from "naive-ui";
-import CommentSection from "@/components/CommentSection.vue";
 import LoadMore from "@/components/LoadMore.vue";
 import type { TaskObjective } from "@/api/types";
 import { useConfigStore } from "@/stores/config";
@@ -193,7 +192,6 @@ watch(() => [config.mode, config.lang], () => load());
             </template>
           </div>
         </template>
-        <CommentSection :path="`/task/${current.id}`" />
       </div>
     </NModal>
   </div>
